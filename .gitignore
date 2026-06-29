@@ -1,0 +1,11 @@
+target/
+node_modules/
+dist/
+.idea/
+.vscode/
+*.log
+.DS_Store
+.env
+frontend/.vite/
+frontend/frontend_run.out.log
+frontend/frontend_run.err.log

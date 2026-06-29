@@ -1,0 +1,13 @@
+import { createApp } from "/node_modules/.vite/deps/vue.js?v=343912e6";
+import { createPinia } from "/node_modules/.vite/deps/pinia.js?v=89896b58";
+import ElementPlus from "/node_modules/.vite/deps/element-plus.js?v=25206ed9";
+import "/node_modules/element-plus/dist/index.css";
+import App from "/src/App.vue";
+import router from "/src/router/index.ts";
+const app = createApp(App);
+app.use(createPinia());
+app.use(router);
+app.use(ElementPlus);
+app.mount("#app");
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIm1haW4udHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgY3JlYXRlQXBwIH0gZnJvbSBcInZ1ZVwiO1xuaW1wb3J0IHsgY3JlYXRlUGluaWEgfSBmcm9tIFwicGluaWFcIjtcbmltcG9ydCBFbGVtZW50UGx1cyBmcm9tIFwiZWxlbWVudC1wbHVzXCI7XG5pbXBvcnQgXCJlbGVtZW50LXBsdXMvZGlzdC9pbmRleC5jc3NcIjtcbmltcG9ydCBBcHAgZnJvbSBcIi4vQXBwLnZ1ZVwiO1xuaW1wb3J0IHJvdXRlciBmcm9tIFwiLi9yb3V0ZXJcIjtcblxuY29uc3QgYXBwID0gY3JlYXRlQXBwKEFwcCk7XG5hcHAudXNlKGNyZWF0ZVBpbmlhKCkpO1xuYXBwLnVzZShyb3V0ZXIpO1xuYXBwLnVzZShFbGVtZW50UGx1cyk7XG5hcHAubW91bnQoXCIjYXBwXCIpO1xuIl0sIm1hcHBpbmdzIjoiQUFBQSxTQUFTLGlCQUFpQjtBQUMxQixTQUFTLG1CQUFtQjtBQUM1QixPQUFPLGlCQUFpQjtBQUN4QixPQUFPO0FBQ1AsT0FBTyxTQUFTO0FBQ2hCLE9BQU8sWUFBWTtBQUVuQixNQUFNLE1BQU0sVUFBVSxHQUFHO0FBQ3pCLElBQUksSUFBSSxZQUFZLENBQUM7QUFDckIsSUFBSSxJQUFJLE1BQU07QUFDZCxJQUFJLElBQUksV0FBVztBQUNuQixJQUFJLE1BQU0sTUFBTTsiLCJuYW1lcyI6W119
