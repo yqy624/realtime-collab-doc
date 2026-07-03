@@ -100,8 +100,18 @@ public class DocumentService {
                 .build();
     }
 
-    public SnapshotDTO saveSnapshot(Integer documentId, Integer userId) {
+    public SnapshotDTO saveSnapshot(Integer documentId, DocumentDTO request, Integer userId) {
         Document document = findAccessibleDocument(documentId, userId);
+        // If content was provided in the request, update the document before snapshotting
+        if (request != null) {
+            if (request.getTitle() != null && !request.getTitle().isBlank()) {
+                document.setTitle(request.getTitle());
+            }
+            if (request.getContent() != null) {
+                document.setContent(request.getContent());
+            }
+            document = documentRepository.save(document);
+        }
         DocumentSnapshot snapshot = DocumentSnapshot.builder()
                 .documentId(document.getId())
                 .title(document.getTitle())

@@ -18,7 +18,7 @@ const emptyState = (): UserState => ({
 
 export const useUserStore = defineStore("user", {
   state: (): UserState => {
-    const raw = localStorage.getItem("collab-user");
+    const raw = sessionStorage.getItem("collab-user");
     return raw ? JSON.parse(raw) as UserState : emptyState();
   },
   getters: {
@@ -27,13 +27,13 @@ export const useUserStore = defineStore("user", {
   actions: {
     setUser(payload: UserState) {
       Object.assign(this, payload);
-      localStorage.setItem("token", payload.token);
-      localStorage.setItem("collab-user", JSON.stringify(payload));
+      sessionStorage.setItem("token", payload.token);
+      sessionStorage.setItem("collab-user", JSON.stringify(payload));
     },
     logout() {
       Object.assign(this, emptyState());
-      localStorage.removeItem("token");
-      localStorage.removeItem("collab-user");
+      sessionStorage.removeItem("token");
+      sessionStorage.removeItem("collab-user");
     }
   }
 });

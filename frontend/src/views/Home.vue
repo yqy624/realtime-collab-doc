@@ -75,7 +75,7 @@ const createNew = async () => {
 
   const { data } = await createDocument({
     title,
-    content: "在这里开始输入内容...",
+    content: "",
     isPublic: true
   });
   ElMessage.success("文档已创建");

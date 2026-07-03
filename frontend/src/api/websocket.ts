@@ -2,10 +2,13 @@ import { Client, type IMessage } from "@stomp/stompjs";
 import { wsBaseUrl } from "./config";
 
 export interface WsHandlers {
+  onConnect?: () => void;
   onDocumentMessage?: (payload: unknown) => void;
   onPresenceMessage?: (payload: unknown) => void;
   onChatMessage?: (payload: unknown) => void;
   onErrorMessage?: (payload: unknown) => void;
+  onDisconnect?: () => void;
+  onWebSocketError?: (error: unknown) => void;
 }
 
 export class CollabSocket {
@@ -14,11 +17,11 @@ export class CollabSocket {
   private pendingPayloads: unknown[] = [];
 
   connect(documentId: number, handlers: WsHandlers) {
-    const token = localStorage.getItem("token") ?? "";
+    const token = sessionStorage.getItem("token") ?? "";
     this.connected = false;
     this.pendingPayloads = [];
     this.client = new Client({
-      brokerURL: `${wsBaseUrl}/ws?token=${encodeURIComponent(token)}`,
+      brokerURL: `${wsBaseUrl}?token=${encodeURIComponent(token)}`,
       connectHeaders: {
         Authorization: `Bearer ${token}`,
         token
@@ -30,6 +33,7 @@ export class CollabSocket {
 
     this.client.onConnect = () => {
       this.connected = true;
+      handlers.onConnect?.();
       this.subscribe(`/topic/document/${documentId}`, handlers.onDocumentMessage);
       this.subscribe(`/topic/presence/${documentId}`, handlers.onPresenceMessage);
       this.subscribe(`/topic/chat/${documentId}`, handlers.onChatMessage);
@@ -39,10 +43,16 @@ export class CollabSocket {
 
     this.client.onDisconnect = () => {
       this.connected = false;
+      handlers.onDisconnect?.();
     };
 
     this.client.onWebSocketClose = () => {
       this.connected = false;
+      handlers.onDisconnect?.();
+    };
+
+    this.client.onWebSocketError = (evt) => {
+      handlers.onWebSocketError?.(evt);
     };
 
     this.client.activate();

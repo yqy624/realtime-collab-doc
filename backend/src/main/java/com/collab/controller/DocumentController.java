@@ -77,8 +77,9 @@ public class DocumentController {
 
     @PostMapping("/{id}/save")
     public ResponseEntity<ApiResponse<SnapshotDTO>> saveDocument(@PathVariable Integer id,
+                                                                 @RequestBody(required = false) DocumentDTO request,
                                                                  @RequestAttribute("userId") Integer userId) {
-        return ResponseEntity.ok(ApiResponse.success(documentService.saveSnapshot(id, userId)));
+        return ResponseEntity.ok(ApiResponse.success(documentService.saveSnapshot(id, request, userId)));
     }
 
     @GetMapping("/{id}/snapshots")

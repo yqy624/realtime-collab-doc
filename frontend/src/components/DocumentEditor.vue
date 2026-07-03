@@ -44,6 +44,8 @@
       ref="editor"
       class="editor"
       contenteditable="true"
+      :data-empty="isEditorEmpty ? 'true' : 'false'"
+      data-placeholder="请输入内容..."
       @input="handleInput"
       @keyup="emitCursor"
       @mouseup="emitCursor"
@@ -82,9 +84,16 @@ const emit = defineEmits<{
   (e: "save"): void;
 }>();
 
-const editor = ref<HTMLDivElement | null>(null);
+const editor = ref<HTMLDivElement>(null!);
+const isEditorEmpty = ref(true);
+const readEditorText = () => {
+  const text = editor.value?.innerText ?? "";
+  return text.trim().length === 0 ? "" : text;
+};
+// expose current editor text so parent can flush before save
+defineExpose({ getText: readEditorText });
 const localTitle = ref(props.title);
-let lastContent = props.content;
+let lastContent = props.content ?? "";
 let debounceTimer: number | null = null;
 
 const wordCount = computed(() => {
@@ -114,7 +123,8 @@ const exportText = () => {
 
 onMounted(() => {
   if (editor.value) {
-    editor.value.innerText = props.content;
+    editor.value.innerText = props.content ?? "";
+    isEditorEmpty.value = readEditorText() === "";
   }
 });
 
@@ -122,9 +132,10 @@ watch(
   () => props.content,
   (value) => {
     if (editor.value && editor.value.innerText !== value) {
-      editor.value.innerText = value;
+      editor.value.innerText = value ?? "";
     }
-    lastContent = value;
+    lastContent = value ?? "";
+    isEditorEmpty.value = lastContent.trim().length === 0;
   }
 );
 
@@ -139,11 +150,12 @@ const emitTitle = () => emit("title-change", localTitle.value);
 
 const handleInput = () => {
   if (!editor.value) return;
-  const current = editor.value.innerText;
+  isEditorEmpty.value = readEditorText() === "";
   if (debounceTimer) window.clearTimeout(debounceTimer);
   debounceTimer = window.setTimeout(() => {
-    const payload = createOperation(lastContent, current, props.revision);
-    lastContent = current;
+    const currentText = readEditorText();
+    const payload = createOperation(lastContent, currentText, props.revision);
+    lastContent = currentText;
     emit("content-change", payload);
   }, 300);
   emitCursor();
@@ -287,6 +299,12 @@ const createOperation = (previous: string, current: string, revision: number): T
   line-height: 1.7;
   white-space: pre-wrap;
   overflow: auto;
+}
+.editor:empty::before,
+.editor[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  pointer-events: none;
 }
 .cursor-bar {
   display: flex;

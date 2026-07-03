@@ -27,7 +27,7 @@
         <UserList :users="onlineUsers" />
       </div>
       <DocumentEditor
-        :title="documentStore.currentDocument.title"
+        ref="editorRef"
         :content="documentStore.currentDocument.content"
         :revision="documentStore.currentDocument.revision"
         :save-status="saveStatus"
@@ -90,7 +90,7 @@
         </header>
         <div class="panel-body">
           <p v-if="loadingHistory" class="loading-text">加载中...</p>
-          <p v-else-if="snapshots.length === 0" class="loading-text">暂无保存版本。点击保存按钮创建版本</p>
+          <p v-else-if="snapshots.length === 0" class="loading-text">暂无保存版本。点击保存按钮创建版本。</p>
           <div v-else class="snapshot-list">
             <article v-for="snap in snapshots" :key="snap.id" class="snapshot-item" :class="{ 'is-current': snap.revision === documentStore.currentDocument?.revision }">
               <div class="snapshot-meta">
@@ -148,10 +148,12 @@ const messages = ref<Array<{ id?: number; senderName: string; senderAvatar?: str
 const socket = new CollabSocket();
 
 const saveStatus = ref<"saved" | "saving" | "unsaved">("saved");
+const connectionStatus = ref<"connecting" | "connected" | "disconnected">("connecting");
 const showInfo = ref(false);
 const showHistory = ref(false);
 const snapshots = ref<SnapshotItem[]>([]);
 const loadingHistory = ref(false);
+const editorRef = ref<InstanceType<typeof DocumentEditor> | null>(null);
 
 const documentId = Number(route.params.id);
 
@@ -169,6 +171,13 @@ const loadDocument = async () => {
 
 const connectSocket = () => {
   socket.connect(documentId, {
+    onConnect: () => {
+      connectionStatus.value = "connected";
+      socket.send({ type: "JOIN", documentId, userId: userStore.userId });
+    },
+    onDisconnect: () => {
+      connectionStatus.value = "disconnected";
+    },
     onDocumentMessage: (payload) => {
       const message = payload as {
         type: string;
@@ -193,13 +202,13 @@ const connectSocket = () => {
           ...remoteCursors.value.filter((cursor) => cursor.userId !== message.userId),
           {
             userId: message.userId,
-            username: message.username ?? "协作者",
+            username: message.username ?? "???",
             cursorPosition: message.cursorPosition ?? 0
           }
         ];
       }
       if (message.type === "ERROR" && message.username === userStore.username) {
-        ElMessage.error(message.chatMessage || "实时连接出错");
+        ElMessage.error(message.chatMessage || "??????");
       }
     },
     onPresenceMessage: (payload) => {
@@ -212,13 +221,12 @@ const connectSocket = () => {
     },
     onErrorMessage: (payload) => {
       const message = payload as { message?: string };
-      ElMessage.error(message.message || "实时连接出错");
+      ElMessage.error(message.message || "??????");
+      connectionStatus.value = "disconnected";
+    },
+    onWebSocketError: () => {
+      connectionStatus.value = "disconnected";
     }
-  });
-  socket.send({
-    type: "JOIN",
-    documentId,
-    userId: userStore.userId
   });
 };
 
@@ -227,7 +235,7 @@ onMounted(async () => {
     await loadDocument();
     connectSocket();
   } catch (error) {
-    ElMessage.error((error as Error)?.message || "加载文档失败");
+    ElMessage.error((error as Error)?.message || "??????");
   }
 });
 
@@ -250,13 +258,17 @@ const handleSave = async () => {
   if (!documentStore.currentDocument) return;
   saveStatus.value = "saving";
   try {
-    const { data } = await saveDocument(documentId);
+    const latestContent = editorRef.value?.getText() ?? documentStore.currentDocument.content;
+    const { data } = await saveDocument(documentId, {
+      title: documentStore.currentDocument.title,
+      content: latestContent
+    });
     saveStatus.value = "saved";
-    ElMessage.success(`已保存版本${data.data.revision}`);
+    ElMessage.success(`????? ${data.data.revision}`);
     await loadDocument();
   } catch (error: any) {
     saveStatus.value = "unsaved";
-    ElMessage.error(error?.response?.data?.message || "保存失败");
+    ElMessage.error(error?.response?.data?.message || "????");
   }
 };
 
@@ -302,17 +314,17 @@ const loadSnapshots = async () => {
 const handleRestore = async (snapshotId: number) => {
   try {
     await ElMessageBox.confirm(
-      "确定要恢复到这个版本吗？当前的未保存改变将丢失。",
-      "恢复版本",
-      { confirmButtonText: "恢复", cancelButtonText: "取消", type: "warning" }
+      "????????????????????????",
+      "????",
+      { confirmButtonText: "??", cancelButtonText: "??", type: "warning" }
     );
     await restoreSnapshot(documentId, snapshotId);
-    ElMessage.success("已恢复到该版本");
+    ElMessage.success("???????");
     await loadDocument();
     await loadSnapshots();
   } catch (error: any) {
     if (error !== "cancel") {
-      ElMessage.error(error?.response?.data?.message || "恢复失败");
+      ElMessage.error(error?.response?.data?.message || "????");
     }
   }
 };

@@ -6,7 +6,7 @@ const documentApi = axios.create({
 });
 
 documentApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -27,6 +27,6 @@ export const createDocument = (payload: DocumentPayload) => documentApi.post("",
 export const updateDocument = (id: number, payload: DocumentPayload) => documentApi.put(`/${id}`, payload);
 export const deleteDocument = (id: number) => documentApi.delete(`/${id}`);
 export const fetchMessages = (id: number) => documentApi.get(`/${id}/messages`);
-export const saveDocument = (id: number) => documentApi.post(`/${id}/save`);
+export const saveDocument = (id: number, payload?: DocumentPayload) => documentApi.post(`/${id}/save`, payload ?? {});
 export const getSnapshots = (id: number) => documentApi.get(`/${id}/snapshots`);
 export const restoreSnapshot = (id: number, snapshotId: number) => documentApi.post(`/${id}/snapshots/${snapshotId}/restore`);
