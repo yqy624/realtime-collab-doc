@@ -22,12 +22,13 @@ RealTimeCollabDoc is a real-time collaborative document MVP built with Spring Bo
 
 ```text
 collab-doc-project/
-├── backend/
-├── frontend/
-├── docker-compose.yml
-├── README.md
-├── LICENSE
-└── run.sh
+|- backend/
+|- frontend/
+|- docs/
+|- docker-compose.yml
+|- README.md
+|- LICENSE
+`- run.sh
 ```
 
 ## Local Development
