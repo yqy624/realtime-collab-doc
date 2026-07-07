@@ -22,13 +22,18 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Controller
 @RequiredArgsConstructor
 public class WebSocketController {
+
+    private static final Pattern MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\w一-龥-]+)");
 
     private final SimpMessagingTemplate messagingTemplate;
     private final DocumentService documentService;
@@ -144,17 +149,51 @@ public class WebSocketController {
                 .messageType("TEXT")
                 .build());
 
-        messagingTemplate.convertAndSend("/topic/chat/" + message.getDocumentId(),
-                ChatMessageDTO.builder()
-                        .id(saved.getId())
-                        .documentId(saved.getDocumentId())
-                        .senderId(user.getId())
-                        .senderName(user.getUsername())
-                        .senderAvatar(user.getAvatarUrl())
-                        .message(saved.getMessage())
-                        .messageType(saved.getMessageType())
-                        .createdAt(saved.getCreatedAt())
-                        .build());
+        ChatMessageDTO payload = ChatMessageDTO.builder()
+                .id(saved.getId())
+                .documentId(saved.getDocumentId())
+                .senderId(user.getId())
+                .senderName(user.getUsername())
+                .senderAvatar(user.getAvatarUrl())
+                .message(saved.getMessage())
+                .messageType(saved.getMessageType())
+                .createdAt(saved.getCreatedAt())
+                .build();
+
+        messagingTemplate.convertAndSend("/topic/chat/" + message.getDocumentId(), payload);
+        sendMentionNotifications(saved.getDocumentId(), user, payload);
+    }
+
+    private void sendMentionNotifications(Integer documentId, User sender, ChatMessageDTO payload) {
+        Set<String> onlineUsers = sessionManager.getOnlineUsers(documentId);
+        Set<String> mentionedUsers = extractMentionedUsers(payload.getMessage());
+        mentionedUsers.retainAll(onlineUsers);
+        mentionedUsers.remove(sender.getUsername());
+
+        if (mentionedUsers.isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> mentionPayload = Map.of(
+                "documentId", payload.getDocumentId(),
+                "senderName", payload.getSenderName(),
+                "senderAvatar", payload.getSenderAvatar() == null ? "" : payload.getSenderAvatar(),
+                "message", payload.getMessage(),
+                "createdAt", payload.getCreatedAt() == null ? LocalDateTime.now().toString() : payload.getCreatedAt().toString()
+        );
+
+        for (String username : mentionedUsers) {
+            messagingTemplate.convertAndSendToUser(username, "/queue/mentions", mentionPayload);
+        }
+    }
+
+    private Set<String> extractMentionedUsers(String value) {
+        Set<String> usernames = new LinkedHashSet<>();
+        Matcher matcher = MENTION_PATTERN.matcher(value == null ? "" : value);
+        while (matcher.find()) {
+            usernames.add(matcher.group(2));
+        }
+        return usernames;
     }
 
     private void handleCursor(CollaborationMessage message, User user) {

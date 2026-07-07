@@ -9,13 +9,16 @@
       <div class="topbar-actions">
         <button class="header-btn" @click="toggleInfo">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
           </svg>
           <span>文档信息</span>
         </button>
         <button class="header-btn" @click="toggleHistory">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
           </svg>
           <span>版本历史</span>
         </button>
@@ -28,6 +31,7 @@
       </div>
       <DocumentEditor
         ref="editorRef"
+        :title="documentStore.currentDocument.title"
         :content="documentStore.currentDocument.content"
         :revision="documentStore.currentDocument.revision"
         :save-status="saveStatus"
@@ -36,18 +40,28 @@
         @title-change="updateTitle"
         @content-change="handleContentChange"
         @cursor-change="sendCursor"
-        @save="handleSave"
+        @submit-version="handleSubmitVersion"
       />
-      <ChatPanel :messages="messages" @send="sendChat" />
+      <ChatPanel
+        ref="chatPanelRef"
+        :messages="messages"
+        :online-users="onlineUsers"
+        :current-username="userStore.username"
+        :unread-mentions="unreadMentions"
+        @send="sendChat"
+        @chat-focus="clearUnreadMentions"
+      />
     </section>
 
-    <!-- Document Info Panel -->
     <div v-if="showInfo" class="overlay" @click.self="showInfo = false">
       <aside class="slide-panel">
         <header class="panel-header">
           <h2>文档信息</h2>
           <button class="close-btn" @click="showInfo = false">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
         </header>
         <div class="panel-body" v-if="documentStore.currentDocument">
@@ -79,30 +93,40 @@
       </aside>
     </div>
 
-    <!-- Version History Panel -->
     <div v-if="showHistory" class="overlay" @click.self="showHistory = false">
       <aside class="slide-panel">
         <header class="panel-header">
           <h2>版本历史</h2>
           <button class="close-btn" @click="showHistory = false">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
         </header>
         <div class="panel-body">
           <p v-if="loadingHistory" class="loading-text">加载中...</p>
-          <p v-else-if="snapshots.length === 0" class="loading-text">暂无保存版本。点击保存按钮创建版本。</p>
+          <p v-else-if="snapshots.length === 0" class="loading-text">暂无历史版本。点击“提交版本”创建记录。</p>
           <div v-else class="snapshot-list">
             <article v-for="snap in snapshots" :key="snap.id" class="snapshot-item" :class="{ 'is-current': snap.revision === documentStore.currentDocument?.revision }">
               <div class="snapshot-meta">
                 <strong>版本 #{{ snap.revision }}</strong>
                 <span>{{ formatDate(snap.createdAt) }}</span>
-                <span class="snapshot-user">由 {{ snap.userName }} 保存</span>
+                <span class="snapshot-user">由 {{ snap.userName }} 提交</span>
               </div>
               <p class="snapshot-title">{{ snap.title }}</p>
               <div class="snapshot-actions">
+                <button class="view-btn" @click="openSnapshot(snap)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                  <span>查看</span>
+                </button>
                 <button v-if="snap.revision !== documentStore.currentDocument?.revision" class="restore-btn" @click="handleRestore(snap.id)">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                   </svg>
                   <span>恢复</span>
                 </button>
@@ -113,17 +137,45 @@
         </div>
       </aside>
     </div>
+
+    <div v-if="activeSnapshot" class="overlay snapshot-overlay" @click.self="closeSnapshot">
+      <aside class="snapshot-panel">
+        <header class="panel-header">
+          <div>
+            <h2>历史版本</h2>
+            <p class="snapshot-caption">{{ formatDate(activeSnapshot.createdAt) }} · 由 {{ activeSnapshot.userName }} 提交</p>
+          </div>
+          <button class="close-btn" @click="closeSnapshot">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </header>
+        <div class="snapshot-view-body">
+          <DocumentEditor
+            :title="activeSnapshot.title"
+            :content="activeSnapshot.content || ''"
+            :revision="activeSnapshot.revision"
+            :save-status="'saved'"
+            :online-users="[]"
+            :remote-cursors="[]"
+            :readonly="true"
+          />
+        </div>
+      </aside>
+    </div>
   </main>
 </template>
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
 import ChatPanel from "../components/ChatPanel.vue";
 import DocumentEditor from "../components/DocumentEditor.vue";
 import UserList from "../components/UserList.vue";
-import { fetchMessages, getDocument, updateDocument, saveDocument, getSnapshots, restoreSnapshot } from "../api/document";
+import { fetchMessages, getDocument, getSnapshots, restoreSnapshot, saveDocument, updateDocument } from "../api/document";
 import { CollabSocket } from "../api/websocket";
 import { useDocumentStore, useUserStore } from "../store";
 import type { TextOperation } from "../utils/ot";
@@ -139,6 +191,14 @@ interface SnapshotItem {
   createdAt: string;
 }
 
+interface MentionNotificationPayload {
+  documentId: number;
+  senderName: string;
+  senderAvatar?: string;
+  message: string;
+  createdAt?: string;
+}
+
 const route = useRoute();
 const documentStore = useDocumentStore();
 const userStore = useUserStore();
@@ -148,12 +208,14 @@ const messages = ref<Array<{ id?: number; senderName: string; senderAvatar?: str
 const socket = new CollabSocket();
 
 const saveStatus = ref<"saved" | "saving" | "unsaved">("saved");
-const connectionStatus = ref<"connecting" | "connected" | "disconnected">("connecting");
 const showInfo = ref(false);
 const showHistory = ref(false);
 const snapshots = ref<SnapshotItem[]>([]);
 const loadingHistory = ref(false);
+const activeSnapshot = ref<SnapshotItem | null>(null);
+const unreadMentions = ref(0);
 const editorRef = ref<InstanceType<typeof DocumentEditor> | null>(null);
+const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null);
 
 const documentId = Number(route.params.id);
 
@@ -169,15 +231,40 @@ const loadDocument = async () => {
   }
 };
 
+const focusChatComposer = async () => {
+  await chatPanelRef.value?.scrollToLatest();
+  chatPanelRef.value?.focusComposer();
+};
+
+const clearUnreadMentions = () => {
+  unreadMentions.value = 0;
+};
+
+const handleMentionNotification = async (payload: unknown) => {
+  const mention = payload as MentionNotificationPayload;
+  if (mention.documentId !== documentId) {
+    return;
+  }
+
+  unreadMentions.value += 1;
+  ElNotification({
+    title: "有人提到了你",
+    message: `${mention.senderName}：${mention.message}`,
+    type: "warning",
+    duration: 5000,
+    onClick: async () => {
+      clearUnreadMentions();
+      await focusChatComposer();
+    }
+  });
+};
+
 const connectSocket = () => {
   socket.connect(documentId, {
     onConnect: () => {
-      connectionStatus.value = "connected";
       socket.send({ type: "JOIN", documentId, userId: userStore.userId });
     },
-    onDisconnect: () => {
-      connectionStatus.value = "disconnected";
-    },
+    onDisconnect: () => {},
     onDocumentMessage: (payload) => {
       const message = payload as {
         type: string;
@@ -202,13 +289,13 @@ const connectSocket = () => {
           ...remoteCursors.value.filter((cursor) => cursor.userId !== message.userId),
           {
             userId: message.userId,
-            username: message.username ?? "???",
+            username: message.username ?? "未知用户",
             cursorPosition: message.cursorPosition ?? 0
           }
         ];
       }
       if (message.type === "ERROR" && message.username === userStore.username) {
-        ElMessage.error(message.chatMessage || "??????");
+        ElMessage.error(message.chatMessage || "协作同步失败");
       }
     },
     onPresenceMessage: (payload) => {
@@ -219,13 +306,13 @@ const connectSocket = () => {
     onChatMessage: (payload) => {
       messages.value = [...messages.value, payload as { senderName: string; senderAvatar?: string; message: string; createdAt?: string }];
     },
+    onMentionMessage: handleMentionNotification,
     onErrorMessage: (payload) => {
       const message = payload as { message?: string };
-      ElMessage.error(message.message || "??????");
-      connectionStatus.value = "disconnected";
+      ElMessage.error(message.message || "协作连接异常");
     },
     onWebSocketError: () => {
-      connectionStatus.value = "disconnected";
+      ElMessage.error("协作连接异常");
     }
   });
 };
@@ -235,7 +322,7 @@ onMounted(async () => {
     await loadDocument();
     connectSocket();
   } catch (error) {
-    ElMessage.error((error as Error)?.message || "??????");
+    ElMessage.error((error as Error)?.message || "加载文档失败");
   }
 });
 
@@ -254,21 +341,39 @@ const handleContentChange = (operation: TextOperation) => {
   });
 };
 
-const handleSave = async () => {
+const handleSubmitVersion = async () => {
   if (!documentStore.currentDocument) return;
+
+  const latestContent = editorRef.value?.getText() ?? documentStore.currentDocument.content;
+  const defaultTitle = documentStore.currentDocument.title || `文档-${Date.now()}`;
+  let title = defaultTitle;
+
+  try {
+    const { value } = await ElMessageBox.prompt("请输入提交到历史版本的文档名称", "提交版本", {
+      confirmButtonText: "提交",
+      cancelButtonText: "取消",
+      inputValue: defaultTitle,
+      inputPlaceholder: "请输入提交文档名称"
+    });
+    title = (value || defaultTitle).trim() || defaultTitle;
+  } catch {
+    return;
+  }
+
   saveStatus.value = "saving";
   try {
-    const latestContent = editorRef.value?.getText() ?? documentStore.currentDocument.content;
     const { data } = await saveDocument(documentId, {
-      title: documentStore.currentDocument.title,
+      title,
       content: latestContent
     });
     saveStatus.value = "saved";
-    ElMessage.success(`????? ${data.data.revision}`);
+    ElMessage.success(`已提交版本 #${data.data.revision}`);
     await loadDocument();
+    await loadSnapshots();
+    showHistory.value = true;
   } catch (error: any) {
     saveStatus.value = "unsaved";
-    ElMessage.error(error?.response?.data?.message || "????");
+    ElMessage.error(error?.response?.data?.message || "提交版本失败");
   }
 };
 
@@ -289,12 +394,15 @@ const sendChat = (message: string) => {
   socket.send({ type: "CHAT", documentId, userId: userStore.userId, chatMessage: message });
 };
 
-const toggleInfo = () => { showHistory.value = false; showInfo.value = !showInfo.value; };
+const toggleInfo = () => {
+  showHistory.value = false;
+  showInfo.value = !showInfo.value;
+};
 
 const toggleHistory = async () => {
   showInfo.value = false;
   showHistory.value = !showHistory.value;
-  if (showHistory.value && snapshots.value.length === 0) {
+  if (showHistory.value) {
     await loadSnapshots();
   }
 };
@@ -311,20 +419,29 @@ const loadSnapshots = async () => {
   }
 };
 
+const openSnapshot = (snapshot: SnapshotItem) => {
+  activeSnapshot.value = snapshot;
+};
+
+const closeSnapshot = () => {
+  activeSnapshot.value = null;
+};
+
 const handleRestore = async (snapshotId: number) => {
   try {
     await ElMessageBox.confirm(
-      "????????????????????????",
-      "????",
-      { confirmButtonText: "??", cancelButtonText: "??", type: "warning" }
+      "恢复后将使用该历史版本覆盖当前文档内容，是否继续？",
+      "恢复历史版本",
+      { confirmButtonText: "恢复", cancelButtonText: "取消", type: "warning" }
     );
     await restoreSnapshot(documentId, snapshotId);
-    ElMessage.success("???????");
+    ElMessage.success("已恢复到所选历史版本");
+    activeSnapshot.value = null;
     await loadDocument();
     await loadSnapshots();
   } catch (error: any) {
     if (error !== "cancel") {
-      ElMessage.error(error?.response?.data?.message || "????");
+      ElMessage.error(error?.response?.data?.message || "恢复历史版本失败");
     }
   }
 };
@@ -332,8 +449,12 @@ const handleRestore = async (snapshotId: number) => {
 const formatDate = (dateStr?: string) => {
   if (!dateStr) return "-";
   return new Date(dateStr).toLocaleString("zh-CN", {
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit"
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
   });
 };
 </script>
@@ -409,17 +530,27 @@ const formatDate = (dateStr?: string) => {
   display: flex;
   justify-content: flex-end;
 }
-.slide-panel {
-  width: min(420px, 90vw);
+.slide-panel,
+.snapshot-panel {
   background: #fff;
   height: 100%;
   overflow-y: auto;
   box-shadow: -8px 0 30px rgba(0, 0, 0, 0.1);
   animation: slideIn 0.2s ease;
 }
+.slide-panel {
+  width: min(420px, 90vw);
+}
+.snapshot-panel {
+  width: min(1100px, 100vw);
+}
 @keyframes slideIn {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 .panel-header {
   display: flex;
@@ -431,6 +562,11 @@ const formatDate = (dateStr?: string) => {
 .panel-header h2 {
   margin: 0;
   font-size: 18px;
+}
+.snapshot-caption {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 .close-btn {
   border: none;
@@ -446,6 +582,9 @@ const formatDate = (dateStr?: string) => {
 }
 .panel-body {
   padding: 20px 24px;
+}
+.snapshot-view-body {
+  padding: 20px 24px 28px;
 }
 .loading-text {
   color: var(--muted);
@@ -503,19 +642,31 @@ const formatDate = (dateStr?: string) => {
 .snapshot-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
+.view-btn,
 .restore-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
-  border: 1px solid #f59e0b;
   border-radius: 8px;
-  background: #fffbeb;
-  color: #b45309;
   cursor: pointer;
   font-size: 12px;
   transition: all 0.15s;
+}
+.view-btn {
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  background: #eff6ff;
+  color: var(--accent);
+}
+.view-btn:hover {
+  background: #dbeafe;
+}
+.restore-btn {
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #b45309;
 }
 .restore-btn:hover {
   background: #fef3c7;

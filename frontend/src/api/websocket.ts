@@ -6,6 +6,7 @@ export interface WsHandlers {
   onDocumentMessage?: (payload: unknown) => void;
   onPresenceMessage?: (payload: unknown) => void;
   onChatMessage?: (payload: unknown) => void;
+  onMentionMessage?: (payload: unknown) => void;
   onErrorMessage?: (payload: unknown) => void;
   onDisconnect?: () => void;
   onWebSocketError?: (error: unknown) => void;
@@ -33,11 +34,12 @@ export class CollabSocket {
 
     this.client.onConnect = () => {
       this.connected = true;
-      handlers.onConnect?.();
       this.subscribe(`/topic/document/${documentId}`, handlers.onDocumentMessage);
       this.subscribe(`/topic/presence/${documentId}`, handlers.onPresenceMessage);
       this.subscribe(`/topic/chat/${documentId}`, handlers.onChatMessage);
+      this.subscribe(`/user/queue/mentions`, handlers.onMentionMessage);
       this.subscribe(`/user/queue/errors`, handlers.onErrorMessage);
+      handlers.onConnect?.();
       this.flushPendingPayloads();
     };
 
