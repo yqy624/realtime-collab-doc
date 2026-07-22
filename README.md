@@ -67,7 +67,7 @@ cd backend
 mvn spring-boot:run
 ```
 
-The backend runs at `http://127.0.0.1:8080/api`.
+The backend runs at `http://127.0.0.1:8081/api`.
 
 ### Start the Frontend
 
@@ -77,7 +77,7 @@ npm install
 npm run dev -- --host 127.0.0.1 --port 3000
 ```
 
-The frontend runs at `http://127.0.0.1:3000`.
+The frontend runs at `http://127.0.0.1:3000` and proxies API requests to `http://127.0.0.1:8081` by default. Set `VITE_PROXY_TARGET` if you need a different backend origin.
 
 ## Docker Compose
 
