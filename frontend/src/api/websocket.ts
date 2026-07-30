@@ -1,4 +1,3 @@
-import { Client, type IMessage } from "@stomp/stompjs";
 import { wsBaseUrl } from "./config";
 
 export interface WsHandlers {
@@ -13,93 +12,128 @@ export interface WsHandlers {
 }
 
 export class CollabSocket {
-  private client: Client | null = null;
+  private socket: WebSocket | null = null;
   private connected = false;
   private pendingPayloads: unknown[] = [];
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private handlers: WsHandlers = {};
+  private documentId = 0;
+  private shouldReconnect = false;
 
   connect(documentId: number, handlers: WsHandlers) {
-    const token = sessionStorage.getItem("token") ?? "";
-    this.connected = false;
+    this.documentId = documentId;
+    this.handlers = handlers;
+    this.shouldReconnect = true;
     this.pendingPayloads = [];
-    this.client = new Client({
-      brokerURL: `${wsBaseUrl}?token=${encodeURIComponent(token)}`,
-      connectHeaders: {
-        Authorization: `Bearer ${token}`,
-        token
-      },
-      reconnectDelay: 3000,
-      heartbeatIncoming: 5000,
-      heartbeatOutgoing: 5000
-    });
+    this.doConnect();
+  }
 
-    this.client.onConnect = () => {
+  private doConnect() {
+    const token = sessionStorage.getItem("token") ?? "";
+    const url = `${wsBaseUrl}?token=${encodeURIComponent(token)}`;
+
+    this.socket = new WebSocket(url);
+
+    this.socket.onopen = () => {
       this.connected = true;
-      this.subscribe(`/topic/document/${documentId}`, handlers.onDocumentMessage);
-      this.subscribe(`/topic/presence/${documentId}`, handlers.onPresenceMessage);
-      this.subscribe(`/topic/chat/${documentId}`, handlers.onChatMessage);
-      this.subscribe(`/user/queue/mentions`, handlers.onMentionMessage);
-      this.subscribe(`/user/queue/errors`, handlers.onErrorMessage);
       handlers.onConnect?.();
       this.flushPendingPayloads();
+
+      // Send JOIN after connecting
+      this.send({
+        type: "JOIN",
+        documentId: this.documentId
+      });
     };
 
-    this.client.onDisconnect = () => {
+    this.socket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        this.routeMessage(payload);
+      } catch {
+        // ignore malformed messages
+      }
+    };
+
+    this.socket.onclose = () => {
       this.connected = false;
       handlers.onDisconnect?.();
+      this.scheduleReconnect();
     };
 
-    this.client.onWebSocketClose = () => {
-      this.connected = false;
-      handlers.onDisconnect?.();
-    };
-
-    this.client.onWebSocketError = (evt) => {
+    this.socket.onerror = (evt) => {
       handlers.onWebSocketError?.(evt);
     };
+  }
 
-    this.client.activate();
+  private routeMessage(payload: any) {
+    switch (payload.type) {
+      case "SYNC":
+      case "EDIT":
+      case "CURSOR":
+      case "ERROR":
+        this.handlers.onDocumentMessage?.(payload);
+        break;
+      case "PRESENCE":
+        this.handlers.onPresenceMessage?.(payload);
+        break;
+      case "CHAT":
+        // Chat messages arrive as direct payload with sender info
+        this.handlers.onChatMessage?.(payload);
+        break;
+      default:
+        this.handlers.onDocumentMessage?.(payload);
+    }
   }
 
   disconnect() {
+    this.shouldReconnect = false;
     this.pendingPayloads = [];
     this.connected = false;
-    this.client?.deactivate();
-    this.client = null;
+
+    // Send LEAVE before closing
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({
+        type: "LEAVE",
+        documentId: this.documentId
+      }));
+    }
+
+    this.socket?.close();
+    this.socket = null;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   send(payload: unknown) {
-    if (!this.client) {
-      return;
-    }
-
-    if (!this.connected) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       this.pendingPayloads.push(payload);
       return;
     }
-
-    this.client.publish({
-      destination: "/app/collaboration",
-      body: JSON.stringify(payload)
-    });
+    this.socket.send(JSON.stringify(payload));
   }
 
   private flushPendingPayloads() {
-    if (!this.client || !this.connected || this.pendingPayloads.length === 0) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.pendingPayloads.length === 0) {
       return;
     }
-
     for (const payload of this.pendingPayloads) {
-      this.client.publish({
-        destination: "/app/collaboration",
-        body: JSON.stringify(payload)
-      });
+      this.socket.send(JSON.stringify(payload));
     }
     this.pendingPayloads = [];
   }
 
-  private subscribe(destination: string, handler?: (payload: unknown) => void) {
-    this.client?.subscribe(destination, (message: IMessage) => {
-      handler?.(JSON.parse(message.body));
-    });
+  private scheduleReconnect() {
+    if (!this.shouldReconnect) return;
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.shouldReconnect) {
+        this.doConnect();
+      }
+    }, 3000);
   }
 }

@@ -9,3 +9,12 @@ dist/
 frontend/.vite/
 frontend/frontend_run.out.log
 frontend/frontend_run.err.log
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/

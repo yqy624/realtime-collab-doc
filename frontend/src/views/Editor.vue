@@ -262,7 +262,7 @@ const handleMentionNotification = async (payload: unknown) => {
 const connectSocket = () => {
   socket.connect(documentId, {
     onConnect: () => {
-      socket.send({ type: "JOIN", documentId, userId: userStore.userId });
+      // JOIN is sent automatically by CollabSocket
     },
     onDisconnect: () => {},
     onDocumentMessage: (payload) => {
@@ -327,7 +327,6 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  socket.send({ type: "LEAVE", documentId, userId: userStore.userId });
   socket.disconnect();
 });
 

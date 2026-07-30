@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
-const backendOrigin = process.env.VITE_PROXY_TARGET || "http://127.0.0.1:8081";
+const backendOrigin = process.env.VITE_PROXY_TARGET || "http://127.0.0.1:8082";
 const websocketOrigin = backendOrigin.replace(/^http/i, "ws");
 
 export default defineConfig({
