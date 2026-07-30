@@ -5,6 +5,7 @@ const backendOrigin = process.env.VITE_PROXY_TARGET || "http://127.0.0.1:8082";
 const websocketOrigin = backendOrigin.replace(/^http/i, "ws");
 
 export default defineConfig({
+  base: "/new/",
   plugins: [vue()],
   server: {
     port: 3000,
