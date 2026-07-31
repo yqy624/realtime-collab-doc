@@ -19,7 +19,7 @@ class DocumentService:
             title=title or "Untitled Document",
             content=content or "",
             creator_id=user_id,
-            is_public=True if is_public is None else is_public,
+            is_public=False if is_public is None else is_public,
             share_token=secrets.token_urlsafe(16),
             revision=0,
         )
@@ -34,7 +34,7 @@ class DocumentService:
             doc.title = data["title"]
         if data.get("content") is not None:
             doc.content = data["content"]
-        if data.get("isPublic") is not None:
+        if "isPublic" in data:
             doc.is_public = data["isPublic"]
         if data.get("revision") is not None:
             doc.revision = data["revision"]

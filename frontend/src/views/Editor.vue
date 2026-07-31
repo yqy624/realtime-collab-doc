@@ -182,6 +182,7 @@
       :document-id="documentStore.currentDocument.id"
       :title="documentStore.currentDocument.title"
       @close="showShare = false"
+      @public-change="updateDocumentVisibility"
     />
   </main>
 </template>
@@ -414,6 +415,14 @@ const sendCursor = (cursorPosition: number) => {
 
 const sendChat = (message: string) => {
   socket.send({ type: "CHAT", documentId, userId: userStore.userId, chatMessage: message });
+};
+
+const updateDocumentVisibility = (isPublic: boolean) => {
+  if (!documentStore.currentDocument) return;
+  documentStore.setCurrentDocument({
+    ...documentStore.currentDocument,
+    isPublic
+  });
 };
 
 const toggleInfo = () => {

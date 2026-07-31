@@ -77,7 +77,12 @@
           <div class="section-title">
             <span class="dot yellow"></span>
             <h4>公开访问</h4>
-            <el-switch v-model="isPublic" size="small" @change="togglePublic" />
+            <el-switch
+              v-model="isPublic"
+              size="small"
+              :loading="isUpdatingPublic"
+              @change="togglePublic"
+            />
           </div>
           <p class="muted">公开后，所有登录用户都能在文档列表看到并访问</p>
         </section>
@@ -95,7 +100,7 @@ import { ref, onMounted, computed } from "vue";
 import { ElMessage } from "element-plus";
 import {
   createShareLink, getShareInfo, revokeShare, updateSharePermission,
-  shareToUser, removeShareUser
+  shareToUser, removeShareUser, updateDocument
 } from "../api/document";
 
 const props = defineProps<{
@@ -103,7 +108,10 @@ const props = defineProps<{
   title: string;
 }>();
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "public-change", value: boolean): void;
+}>();
 
 const placeholderAvatar = "https://ui-avatars.com/api/?name=?&background=ccc&color=fff";
 
@@ -111,6 +119,7 @@ const linkMode = ref<"off" | "on">("off");
 const linkPermission = ref<"view" | "edit">("view");
 const shareToken = ref("");
 const isPublic = ref(false);
+const isUpdatingPublic = ref(false);
 const users = ref<Array<{ id: number; username: string; avatarUrl: string; permission: string }>>([]);
 const username = ref("");
 const newPerm = ref<"view" | "edit">("view");
@@ -196,14 +205,23 @@ const removeUser = async (u: { id: number }) => {
   }
 };
 
-const togglePublic = async () => {
-  // 通过 updateDocument 切换 isPublic
-  const { updateDocument } = await import("../api/document");
+const togglePublic = async (value: boolean | string | number) => {
+  const previousValue = isPublic.value;
+  const nextValue = value === true;
+  isPublic.value = nextValue;
+  isUpdatingPublic.value = true;
+
   try {
-    await updateDocument(props.documentId, { isPublic: isPublic.value });
-    ElMessage.success(isPublic.value ? "文档已公开" : "文档已设为私有");
+    const { data } = await updateDocument(props.documentId, { isPublic: nextValue });
+    const savedValue = data.data?.isPublic === true;
+    isPublic.value = savedValue;
+    emit("public-change", savedValue);
+    ElMessage.success(savedValue ? "文档已公开" : "文档已设为私有");
   } catch (e: any) {
+    isPublic.value = previousValue;
     ElMessage.error(e.response?.data?.message || "操作失败");
+  } finally {
+    isUpdatingPublic.value = false;
   }
 };
 

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.models.database import Base, engine, get_db
+from app.models.database import Base, engine, ensure_document_share_columns, get_db
 from app.models.document import Document
 from app.routers import auth, documents
 from app.routers.ws_handler import websocket_endpoint
@@ -17,6 +17,7 @@ from app.init_data import init_data
 async def lifespan(app: FastAPI):
     # Create tables on startup
     Base.metadata.create_all(bind=engine)
+    ensure_document_share_columns()
     # Seed initial data
     init_data()
     yield

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
@@ -33,3 +33,20 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def ensure_document_share_columns():
+    """Add share columns to databases created before document sharing existed."""
+    columns = {column["name"] for column in inspect(engine).get_columns("documents")}
+    missing = []
+    if "share_token" not in columns:
+        missing.append("ALTER TABLE documents ADD COLUMN share_token VARCHAR(64)")
+    if "share_permission" not in columns:
+        missing.append(
+            "ALTER TABLE documents ADD COLUMN share_permission VARCHAR(10) NOT NULL DEFAULT 'view'"
+        )
+
+    if missing:
+        with engine.begin() as connection:
+            for statement in missing:
+                connection.execute(text(statement))

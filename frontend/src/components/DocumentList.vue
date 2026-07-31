@@ -3,7 +3,7 @@
     <!-- 顶部工具栏 -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <h3>我的文档</h3>
+        <h3>{{ activeFilter === "public" ? "公开文档" : "我的文档" }}</h3>
         <span class="count">{{ documents.length }} 份</span>
       </div>
       <div class="toolbar-right">
@@ -57,14 +57,16 @@
 
     <div v-else class="empty-box">
       <div class="empty-icon">📄</div>
-      <p>还没有文档，点击"新建文档"开始协作</p>
-      <button class="btn create-btn" @click="$emit('create')">＋ 新建文档</button>
+      <p v-if="activeFilter === 'public'">暂无公开文档</p>
+      <p v-else>还没有文档，点击"新建文档"开始协作</p>
+      <button v-if="activeFilter !== 'public'" class="btn create-btn" @click="$emit('create')">＋ 新建文档</button>
+      <button v-else class="btn create-btn" @click="activeFilter = 'all'">查看我的文档</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 
 interface Doc {
   id: number;
@@ -88,6 +90,13 @@ defineEmits<{
 
 const keyword = ref("");
 const activeFilter = ref<"all" | "mine" | "shared" | "public">("all");
+
+// 首页"浏览公开文档"按钮 → 切换到公开文档筛选
+const onFilterPublic = () => {
+  activeFilter.value = "public";
+};
+onMounted(() => window.addEventListener("filter-public", onFilterPublic));
+onBeforeUnmount(() => window.removeEventListener("filter-public", onFilterPublic));
 
 const filterTabs = [
   { key: "all", label: "全部" },

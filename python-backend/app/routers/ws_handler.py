@@ -69,21 +69,21 @@ async def websocket_endpoint(ws: WebSocket):
                 if msg_type == "JOIN":
                     current_doc_id = doc_id
                     _register_connection(ws, doc_id)
-                    _handle_join(ws, db, doc_id, user)
+                    await _handle_join(ws, db, doc_id, user)
 
                 elif msg_type == "LEAVE":
                     _unregister_connection(ws, doc_id)
-                    _handle_leave(db, doc_id, user)
+                    await _handle_leave(db, doc_id, user)
                     current_doc_id = None
 
                 elif msg_type == "EDIT":
-                    _handle_edit(db, doc_id, user, msg.get("operation") or {})
+                    await _handle_edit(db, doc_id, user, msg.get("operation") or {})
 
                 elif msg_type == "CHAT":
-                    _handle_chat(db, doc_id, user, msg.get("chatMessage") or "")
+                    await _handle_chat(db, doc_id, user, msg.get("chatMessage") or "")
 
                 elif msg_type == "CURSOR":
-                    _handle_cursor(doc_id, user, msg.get("cursorPosition"))
+                    await _handle_cursor(doc_id, user, msg.get("cursorPosition"))
 
                 else:
                     await _send_ws(ws, {"type": "ERROR", "message": f"Unknown type: {msg_type}"})
@@ -117,9 +117,9 @@ def _unregister_connection(ws: WebSocket, doc_id: int):
             del _doc_connections[doc_id]
 
 
-def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
+async def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
     online = session_manager.join(doc_id, user.username)
-    _broadcast(doc_id, {
+    await _broadcast(doc_id, {
         "type": "PRESENCE",
         "documentId": doc_id,
         "onlineUsers": online,
@@ -128,7 +128,7 @@ def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
     try:
         svc = DocumentService(db)
         doc = svc.find_accessible(doc_id, user.id)
-        _send_ws(ws, {
+        await _send_ws(ws, {
             "type": "SYNC",
             "documentId": doc.id,
             "content": doc.content,
@@ -139,9 +139,9 @@ def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
         pass
 
 
-def _handle_leave(db, doc_id: int, user: User):
+async def _handle_leave(db, doc_id: int, user: User):
     online = session_manager.leave(doc_id, user.username)
-    _broadcast(doc_id, {
+    await _broadcast(doc_id, {
         "type": "PRESENCE",
         "documentId": doc_id,
         "onlineUsers": online,
@@ -149,7 +149,7 @@ def _handle_leave(db, doc_id: int, user: User):
     })
 
 
-def _handle_edit(db, doc_id: int, user: User, op_data: dict):
+async def _handle_edit(db, doc_id: int, user: User, op_data: dict):
     if not op_data.get("type"):
         raise ValueError("无效的编辑操作")
 
@@ -177,7 +177,7 @@ def _handle_edit(db, doc_id: int, user: User, op_data: dict):
 
     _save_op_log(db, doc_id, user.id, transformed, doc.revision)
 
-    _broadcast(doc_id, {
+    await _broadcast(doc_id, {
         "type": "EDIT",
         "documentId": doc.id,
         "userId": user.id,
@@ -190,7 +190,7 @@ def _handle_edit(db, doc_id: int, user: User, op_data: dict):
     })
 
 
-def _handle_chat(db, doc_id: int, user: User, chat_text: str):
+async def _handle_chat(db, doc_id: int, user: User, chat_text: str):
     if not chat_text.strip():
         raise ValueError("消息不能为空")
 
@@ -205,6 +205,7 @@ def _handle_chat(db, doc_id: int, user: User, chat_text: str):
     db.refresh(msg)
 
     payload = {
+        "type": "CHAT",
         "id": msg.id,
         "documentId": msg.document_id,
         "senderId": user.id,
@@ -214,12 +215,12 @@ def _handle_chat(db, doc_id: int, user: User, chat_text: str):
         "messageType": msg.message_type,
         "createdAt": msg.created_at.isoformat() if msg.created_at else None,
     }
-    _broadcast(doc_id, payload)
+    await _broadcast(doc_id, payload)
     _handle_mentions(doc_id, user, payload)
 
 
-def _handle_cursor(doc_id: int, user: User, cursor_pos):
-    _broadcast(doc_id, {
+async def _handle_cursor(doc_id: int, user: User, cursor_pos):
+    await _broadcast(doc_id, {
         "type": "CURSOR",
         "documentId": doc_id,
         "userId": user.id,
@@ -228,6 +229,10 @@ def _handle_cursor(doc_id: int, user: User, cursor_pos):
         "cursorPosition": cursor_pos,
         "timestamp": datetime.now().isoformat(),
     })
+
+
+def _extract_mentions(text: str) -> set[str]:
+    return {m.group(2) for m in MENTION_PATTERN.finditer(text)}
 
 
 def _handle_mentions(doc_id: int, sender: User, payload: dict):
@@ -244,13 +249,13 @@ def _handle_mentions(doc_id: int, sender: User, payload: dict):
     pass
 
 
-def _broadcast(doc_id: int, data: dict):
+async def _broadcast(doc_id: int, data: dict):
     """Send JSON to every WebSocket connected to this document."""
     message = json.dumps(data, ensure_ascii=False)
     dead = set()
     for ws in _doc_connections.get(doc_id, set()):
         try:
-            ws.send_text(message)
+            await ws.send_text(message)
         except Exception:
             dead.add(ws)
     if dead:
@@ -259,9 +264,9 @@ def _broadcast(doc_id: int, data: dict):
             del _doc_connections[doc_id]
 
 
-def _send_ws(ws: WebSocket, data: dict):
+async def _send_ws(ws: WebSocket, data: dict):
     try:
-        ws.send_text(json.dumps(data, ensure_ascii=False))
+        await ws.send_text(json.dumps(data, ensure_ascii=False))
     except Exception:
         pass
 
@@ -315,8 +320,3 @@ def _save_op_log(db, doc_id: int, user_id: int, op: OTOperation, revision: int):
         content=content,
         revision=revision,
     ))
-    db.commit()
-
-
-def _extract_mentions(text: str) -> set[str]:
-    return {m.group(2) for m in MENTION_PATTERN.finditer(text)}

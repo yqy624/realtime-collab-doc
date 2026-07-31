@@ -56,12 +56,36 @@
       />
     </section>
 
+    <!-- 新建文档弹窗 -->
+    <el-dialog v-model="showCreate" title="新建文档" width="420px">
+      <div class="create-form">
+        <el-input
+          v-model="createTitle"
+          placeholder="请输入文档名称"
+          maxlength="50"
+          @keyup.enter="confirmCreate"
+        />
+        <div class="create-public">
+          <div class="create-public-text">
+            <span class="create-public-title">公开文档</span>
+            <span class="create-public-desc">公开后所有登录用户都能看到并访问</span>
+          </div>
+          <el-switch v-model="createPublic" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showCreate = false">取消</el-button>
+        <el-button type="primary" @click="confirmCreate">创建</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 分享弹窗 -->
     <ShareDialog
       v-if="shareDoc"
       :document-id="shareDoc.id"
       :title="shareDoc.title"
       @close="shareDoc = null"
+      @public-change="updateDocumentVisibility(shareDoc.id, $event)"
     />
   </main>
 </template>
@@ -82,6 +106,9 @@ const documentStore = useDocumentStore();
 const placeholderAvatar = "https://ui-avatars.com/api/?name=?&background=6366f1&color=fff";
 const showUserMenu = ref(false);
 const shareDoc = ref<{ id: number; title: string } | null>(null);
+const showCreate = ref(false);
+const createTitle = ref("");
+const createPublic = ref(false);
 
 const displayDocuments = computed(() =>
   documentStore.documents.map((doc: any) => ({
@@ -104,23 +131,26 @@ const load = async () => {
 
 onMounted(load);
 
-const createNew = async () => {
-  const defaultTitle = `新建协作文档-${Date.now()}`;
-  let title = defaultTitle;
-  try {
-    const { value } = await ElMessageBox.prompt("请输入文档名称", "新建文档", {
-      confirmButtonText: "创建",
-      cancelButtonText: "取消",
-      inputValue: defaultTitle,
-      inputPlaceholder: "请输入文档名称"
-    });
-    title = (value || defaultTitle).trim() || defaultTitle;
-  } catch {
+const createNew = () => {
+  createTitle.value = "";
+  createPublic.value = false;
+  showCreate.value = true;
+};
+
+const confirmCreate = async () => {
+  const title = createTitle.value.trim();
+  if (!title) {
+    ElMessage.warning("请输入文档名称");
     return;
   }
-  const { data } = await createDocument({ title, content: "", isPublic: false });
-  ElMessage.success("文档已创建");
+  const { data } = await createDocument({
+    title,
+    content: "",
+    isPublic: createPublic.value
+  });
+  ElMessage.success(createPublic.value ? "公开文档已创建" : "文档已创建");
   await load();
+  showCreate.value = false;
   router.push(`/editor/${data.data.id}`);
 };
 
@@ -132,6 +162,12 @@ const goPublic = () => {
 
 const openShare = (doc: { id: number; title: string }) => {
   shareDoc.value = doc;
+};
+
+const updateDocumentVisibility = (documentId: number, isPublic: boolean) => {
+  documentStore.documents = documentStore.documents.map((doc) =>
+    doc.id === documentId ? { ...doc, isPublic } : doc
+  );
 };
 
 const removeDocument = async (doc: { id: number; title: string }) => {
@@ -269,6 +305,21 @@ const logout = () => {
 
 /* 文档区 */
 .docs-area { max-width: 1200px; margin: 0 auto; padding: 0 32px 48px; }
+
+/* 新建文档弹窗 */
+.create-form { display: flex; flex-direction: column; gap: 16px; }
+.create-public {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #eef0f4;
+  border-radius: 12px;
+}
+.create-public-title { display: block; font-size: 14px; font-weight: 600; color: #1e293b; }
+.create-public-desc { display: block; font-size: 12px; color: #94a3b8; margin-top: 2px; }
 
 @media (max-width: 768px) {
   .top-nav { padding: 12px 16px; }

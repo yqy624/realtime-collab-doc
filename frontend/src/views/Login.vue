@@ -18,12 +18,13 @@
 
 <script setup lang="ts">
 import { reactive } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { loginApi } from "../api/auth";
 import { useUserStore } from "../store";
 
 const router = useRouter();
+const route = useRoute();
 const userStore = useUserStore();
 const form = reactive({
   username: "admin",
@@ -35,7 +36,8 @@ const submit = async () => {
     const { data } = await loginApi(form);
     userStore.setUser(data.data);
     ElMessage.success(`登录成功：${data.data.username}`);
-    router.push("/home");
+    const redirect = route.query.redirect as string | undefined;
+    router.push(redirect || "/home");
   } catch (error: any) {
     const detail = error?.response?.data?.message || error?.message || "登录失败";
     ElMessage.error(detail);

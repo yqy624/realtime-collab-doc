@@ -36,7 +36,7 @@ export class CollabSocket {
 
     this.socket.onopen = () => {
       this.connected = true;
-      handlers.onConnect?.();
+      this.handlers.onConnect?.();
       this.flushPendingPayloads();
 
       // Send JOIN after connecting
@@ -57,12 +57,12 @@ export class CollabSocket {
 
     this.socket.onclose = () => {
       this.connected = false;
-      handlers.onDisconnect?.();
+      this.handlers.onDisconnect?.();
       this.scheduleReconnect();
     };
 
     this.socket.onerror = (evt) => {
-      handlers.onWebSocketError?.(evt);
+      this.handlers.onWebSocketError?.(evt);
     };
   }
 
@@ -78,7 +78,7 @@ export class CollabSocket {
         this.handlers.onPresenceMessage?.(payload);
         break;
       case "CHAT":
-        // Chat messages arrive as direct payload with sender info
+        // Chat messages arrive as direct payload with sender info.
         this.handlers.onChatMessage?.(payload);
         break;
       default:
