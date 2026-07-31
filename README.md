@@ -1,129 +1,107 @@
 # RealTimeCollabDoc
 
-RealTimeCollabDoc is a real-time collaborative document MVP built with Spring Boot 3, Vue 3, WebSocket/STOMP, and MySQL.
+基于 Python FastAPI + Vue 3 的实时协作文档系统。支持多人实时编辑、文档内聊天、在线用户列表、快照与版本恢复、分享链接访问控制，并集成 Ollama 本地大模型的 AI 助手。
 
 ## Features
 
-- User registration and login with JWT authentication
-- Document CRUD operations
-- Real-time collaborative plain text editing
-- In-document chat
-- Online user presence
-- Snapshot and revision support for collaborative sessions
+- JWT 认证：注册 / 登录 / 接口鉴权
+- 文档管理：创建、编辑、删除、列表、快照与版本恢复
+- 实时协作：WebSocket + 操作转换（OT），多人同时编辑同一文档
+- 文档内聊天与在线用户实时列表
+- 分享链接：生成分享链接，支持只读 / 可编辑权限控制
+- AI 助手：集成 Ollama 本地大模型（默认 `granite4.1:8b`），可在文档内对话
+- 子路径部署：支持 Nginx 反向代理挂载在 `/new/` 路径
 
 ## Tech Stack
 
-- Backend: Spring Boot 3.1, Spring Security, Spring WebSocket, Spring Data JPA
-- Frontend: Vue 3, TypeScript, Vite, Pinia, Element Plus
+- Backend: Python 3.11+ / FastAPI / SQLAlchemy 2 / WebSocket / python-jose / bcrypt
+- Frontend: Vue 3 / TypeScript / Vite / Pinia / Element Plus
 - Database: MySQL 8
-- Real-time messaging: WebSocket + STOMP
+- Deployment: Docker Compose + Nginx
 
 ## Project Structure
 
 ```text
 collab-doc-project/
-|- backend/
-|- frontend/
-|- docs/
-|- docker-compose.yml
+|- python-backend/       # FastAPI 后端（端口 8082）
+|- frontend/             # Vue 3 + Vite 前端（开发端口 3000）
+|- docs/                 # 设计文档
+|- docker-compose.yml    # MySQL + 后端 + 前端一键部署
+|- run.sh                # 启动脚本（优先使用 Docker Compose）
+|- start-docker-8083.bat # Windows 快捷启动脚本
 |- README.md
 |- LICENSE
-`- run.sh
 ```
 
 ## Local Development
 
 ### Prerequisites
 
-- Java 17
-- Maven 3.9+
+- Python 3.11+
 - Node.js 20+
-- MySQL 8
+- MySQL 8（本地创建数据库 `collab_doc`）
 
-### Database Configuration
-
-Create a MySQL database named `collab_doc`, then provide credentials with environment variables.
-
-Windows PowerShell:
-
-```powershell
-$env:SPRING_DATASOURCE_USERNAME="root"
-$env:SPRING_DATASOURCE_PASSWORD="your-mysql-password"
-$env:APP_JWT_SECRET="replace-with-a-long-random-secret"
-```
-
-Bash:
+### Backend
 
 ```bash
-export SPRING_DATASOURCE_USERNAME=root
-export SPRING_DATASOURCE_PASSWORD=your-mysql-password
-export APP_JWT_SECRET=replace-with-a-long-random-secret
+cd python-backend
+pip install -r requirements.txt
+export DATABASE_URL="mysql+pymysql://root:your-password@127.0.0.1:3306/collab_doc"
+python run.py
 ```
 
-### Start the Backend
+后端运行在 `http://127.0.0.1:8082`，API 前缀为 `/api`。
 
-```bash
-cd backend
-mvn spring-boot:run
-```
-
-The backend runs at `http://127.0.0.1:8081/api`.
-
-### Start the Frontend
+### Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 3000
+npm run dev
 ```
 
-The frontend runs at `http://127.0.0.1:3000` and proxies API requests to `http://127.0.0.1:8081` by default. Set `VITE_PROXY_TARGET` if you need a different backend origin.
+前端运行在 `http://127.0.0.1:3000`，开发环境通过 Vite 代理转发 `/new/api` 到后端（可用 `VITE_PROXY_TARGET` 覆盖目标地址）。
 
-## Docker Compose
-
-Use environment variables instead of hard-coded secrets before starting:
-
-Windows PowerShell:
-
-```powershell
-$env:MYSQL_ROOT_PASSWORD="your-mysql-password"
-$env:APP_JWT_SECRET="replace-with-a-long-random-secret"
-./run.sh
-```
-
-Bash:
+## Docker Compose Deployment
 
 ```bash
-export MYSQL_ROOT_PASSWORD=your-mysql-password
-export APP_JWT_SECRET=replace-with-a-long-random-secret
+export MYSQL_ROOT_PASSWORD="your-mysql-password"
+export APP_JWT_SECRET="replace-with-a-long-random-secret"
 ./run.sh
 ```
 
-If Docker Compose is available, `run.sh` starts MySQL, the backend, and the frontend together. Otherwise it falls back to local development mode.
+或直接：
+
+```bash
+docker compose up -d --build
+```
+
+端口映射（可通过环境变量覆盖）：
+
+| Service  | Host Port | Container Port |
+|----------|-----------|----------------|
+| MySQL    | 3308      | 3306           |
+| Backend  | 8082      | 8082           |
+| Frontend | 3000      | 80 (Nginx)     |
 
 ## Test Accounts
 
-The app seeds a few demo accounts during initialization for local testing:
+初始化时自动创建演示账号，默认密码均为 `password123`：
 
 - `admin`
 - `user1`
 - `user2`
 
-Default demo password: `password123`
+## Sub-path Deployment
 
-## Build Verification
+如需与其他项目共用域名（例如挂载在 `http://<host>/new/`），需同步修改三处配置，否则会出现空白页或 API 被拦截：
 
-The project can be verified with:
+1. `frontend/vite.config.ts` — 构建 `base: '/new/'`
+2. `frontend/src/router/index.ts` — `createWebHistory('/new/')`
+3. `frontend/src/api/config.ts` — API 请求路径加 `/new` 前缀
 
-```bash
-cd backend
-mvn -q -DskipTests package
+构建产物 `frontend/dist/` 已预构建提交，部署时直接由 Nginx 提供静态文件。
 
-cd ../frontend
-npm run build
-```
+## License
 
-## Notes
-
-- The editor uses `contenteditable` plus a basic OT-style synchronization strategy for MVP use.
-- Do not commit real database passwords, production JWT secrets, or personal environment files.
+[MIT](LICENSE)
