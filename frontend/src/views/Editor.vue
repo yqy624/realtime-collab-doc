@@ -3,7 +3,7 @@
     <header class="topbar">
       <button class="back" @click="$router.push('/home')">返回文档列表</button>
       <div class="title-wrap">
-        <span class="eyebrow">Realtime Workspace</span>
+        <span class="eyebrow">音go实时协作网 · 实时工作区</span>
         <h1>{{ documentStore.currentDocument?.title || "协作文档" }}</h1>
       </div>
       <div class="topbar-actions">

@@ -4,7 +4,7 @@
     <header class="top-nav">
       <div class="brand">
         <span class="brand-logo">✍️</span>
-        <span class="brand-name">CollabDoc</span>
+        <span class="brand-name">音go实时协作网</span>
       </div>
       <div class="nav-right">
         <div class="user-chip" @click="showUserMenu = !showUserMenu">
