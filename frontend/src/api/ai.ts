@@ -35,6 +35,50 @@ export interface AIHistoryItem {
   createdAt?: string;
 }
 
+export interface KnowledgeSearchHit {
+  documentId: number;
+  title: string;
+  chunkIndex: number;
+  content: string;
+  score: number;
+  matchedTerms: string[];
+}
+
+export interface KnowledgeAgentResult {
+  question: string;
+  answer: string;
+  citations: KnowledgeSearchHit[];
+  refusal: boolean;
+  model: string;
+  elapsedMs: number;
+  trace: {
+    workflow: string[];
+    retrievedChunks: number;
+  };
+}
+
+export const searchKnowledge = (
+  query: string,
+  options: { documentId?: number; topK?: number } = {}
+) =>
+  aiApi.get("/knowledge/search", {
+    params: {
+      q: query,
+      documentId: options.documentId,
+      topK: options.topK ?? 8
+    }
+  });
+
+export const queryKnowledgeAgent = (
+  question: string,
+  options: { documentId?: number; topK?: number } = {}
+) =>
+  aiApi.post("/agent/query", {
+    question,
+    documentId: options.documentId,
+    topK: options.topK ?? 6
+  });
+
 export const askAI = (documentId: number, question: string) =>
   aiApi.post(`/documents/${documentId}/ask`, { question });
 

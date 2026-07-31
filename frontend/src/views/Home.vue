@@ -46,6 +46,48 @@
     </section>
 
     <!-- 文档区域 -->
+    <section class="knowledge-search">
+      <div class="search-heading">
+        <div>
+          <span class="tag">RAG KNOWLEDGE SEARCH</span>
+          <h2>从可访问文档中找答案依据</h2>
+          <p>按关键词检索文档片段，结果会显示来源文档和命中位置。</p>
+        </div>
+        <form class="knowledge-form" @submit.prevent="runKnowledgeSearch">
+          <input
+            v-model="knowledgeQuery"
+            placeholder="输入关键词，例如：协作、风险、版本历史"
+            aria-label="知识库关键词"
+          />
+          <button type="submit" :disabled="searching || !knowledgeQuery.trim()">
+            {{ searching ? "检索中..." : "检索" }}
+          </button>
+        </form>
+      </div>
+      <div v-if="knowledgeSearched" class="knowledge-results">
+        <div class="results-meta">
+          <span>共命中 {{ knowledgeResults.length }} 个片段</span>
+          <button type="button" @click="clearKnowledgeSearch">清空</button>
+        </div>
+        <article
+          v-for="item in knowledgeResults"
+          :key="`${item.documentId}-${item.chunkIndex}`"
+          class="knowledge-result"
+          @click="goEditor({ id: item.documentId })"
+        >
+          <div class="result-top">
+            <strong>{{ item.title }}</strong>
+            <span>片段 {{ item.chunkIndex + 1 }} · {{ Math.round(item.score * 100) }}%</span>
+          </div>
+          <p>{{ item.content }}</p>
+          <small>命中：{{ item.matchedTerms.join("、") }}</small>
+        </article>
+        <div v-if="knowledgeResults.length === 0" class="no-results">
+          没有在当前可访问文档中找到相关片段。
+        </div>
+      </div>
+    </section>
+
     <section class="docs-area">
       <DocumentList
         :documents="displayDocuments"
@@ -96,6 +138,7 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import DocumentList from "../components/DocumentList.vue";
 import ShareDialog from "../components/ShareDialog.vue";
+import { searchKnowledge, type KnowledgeSearchHit } from "../api/ai";
 import { createDocument, deleteDocument, listDocuments } from "../api/document";
 import { useDocumentStore, useUserStore } from "../store";
 
@@ -109,6 +152,10 @@ const shareDoc = ref<{ id: number; title: string } | null>(null);
 const showCreate = ref(false);
 const createTitle = ref("");
 const createPublic = ref(false);
+const knowledgeQuery = ref("");
+const knowledgeResults = ref<KnowledgeSearchHit[]>([]);
+const knowledgeSearched = ref(false);
+const searching = ref(false);
 
 const displayDocuments = computed(() =>
   documentStore.documents.map((doc: any) => ({
@@ -155,6 +202,28 @@ const confirmCreate = async () => {
 };
 
 const goEditor = (doc: { id: number }) => router.push(`/editor/${doc.id}`);
+
+const runKnowledgeSearch = async () => {
+  if (!knowledgeQuery.value.trim()) return;
+  searching.value = true;
+  knowledgeSearched.value = true;
+  try {
+    const { data } = await searchKnowledge(knowledgeQuery.value.trim());
+    knowledgeResults.value = data.data?.results || [];
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || error?.message || "知识库检索失败");
+    knowledgeResults.value = [];
+  } finally {
+    searching.value = false;
+  }
+};
+
+const clearKnowledgeSearch = () => {
+  knowledgeQuery.value = "";
+  knowledgeResults.value = [];
+  knowledgeSearched.value = false;
+};
+
 const goPublic = () => {
   // 触发筛选公开文档
   window.dispatchEvent(new CustomEvent("filter-public"));
@@ -306,6 +375,71 @@ const logout = () => {
 /* 文档区 */
 .docs-area { max-width: 1200px; margin: 0 auto; padding: 0 32px 48px; }
 
+.knowledge-search {
+  max-width: 1200px;
+  margin: 0 auto 28px;
+  padding: 0 32px;
+}
+.search-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid #dbe4f0;
+  border-radius: 16px;
+}
+.search-heading h2 { margin: 12px 0 6px; color: #0f172a; font-size: 22px; }
+.search-heading p { margin: 0; color: #64748b; font-size: 13px; }
+.knowledge-form { display: flex; gap: 8px; min-width: min(460px, 100%); }
+.knowledge-form input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #dbe4f0;
+  border-radius: 9px;
+  padding: 11px 12px;
+  outline: none;
+  font-size: 13px;
+}
+.knowledge-form input:focus { border-color: #3b82f6; }
+.knowledge-form button {
+  border: 1px solid #2563eb;
+  border-radius: 9px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  padding: 0 18px;
+  font-size: 13px;
+}
+.knowledge-form button:disabled { cursor: not-allowed; opacity: .5; }
+.knowledge-results { display: grid; gap: 8px; margin-top: 10px; }
+.results-meta {
+  display: flex;
+  justify-content: space-between;
+  color: #64748b;
+  font-size: 12px;
+}
+.results-meta button {
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+}
+.knowledge-result {
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.knowledge-result:hover { border-color: #93c5fd; }
+.result-top { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.result-top span, .knowledge-result small { color: #64748b; font-size: 11px; }
+.knowledge-result p { margin: 7px 0; color: #334155; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.no-results { padding: 22px; color: #64748b; text-align: center; font-size: 12px; }
+
 /* 新建文档弹窗 */
 .create-form { display: flex; flex-direction: column; gap: 16px; }
 .create-public {
@@ -325,6 +459,9 @@ const logout = () => {
   .top-nav { padding: 12px 16px; }
   .hero { padding: 32px 16px 24px; }
   .docs-area { padding: 0 16px 32px; }
+  .knowledge-search { padding: 0 16px; }
+  .search-heading { align-items: stretch; flex-direction: column; padding: 18px; }
+  .knowledge-form { min-width: 0; }
   .hero-stats { width: 100%; }
   .stat-card { flex: 1; }
 }

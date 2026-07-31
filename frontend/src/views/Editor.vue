@@ -72,6 +72,14 @@
           >
             AI 助手
           </button>
+          <button
+            class="right-tab"
+            :class="{ active: activeRightPanel === 'agent' }"
+            type="button"
+            @click="activeRightPanel = 'agent'"
+          >
+            知识 Agent
+          </button>
         </nav>
         <ChatPanel
           v-if="activeRightPanel === 'chat'"
@@ -84,11 +92,15 @@
           @chat-focus="clearUnreadMentions"
         />
         <AIAssistantPanel
-          v-else
+          v-else-if="activeRightPanel === 'ai'"
           :document-id="documentId"
           :get-selection="getEditorSelection"
           :append-to-document="appendAIResult"
           :replace-document-selection="replaceAISelection"
+        />
+        <KnowledgeAgentPanel
+          v-else
+          :scope-document-id="documentId"
         />
       </div>
     </section>
@@ -221,6 +233,7 @@ import { useRoute } from "vue-router";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
 import ChatPanel from "../components/ChatPanel.vue";
 import AIAssistantPanel from "../components/AIAssistantPanel.vue";
+import KnowledgeAgentPanel from "../components/KnowledgeAgentPanel.vue";
 import DocumentEditor from "../components/DocumentEditor.vue";
 import UserList from "../components/UserList.vue";
 import ShareDialog from "../components/ShareDialog.vue";
@@ -267,7 +280,7 @@ const snapshots = ref<SnapshotItem[]>([]);
 const loadingHistory = ref(false);
 const activeSnapshot = ref<SnapshotItem | null>(null);
 const unreadMentions = ref(0);
-const activeRightPanel = ref<"chat" | "ai">("chat");
+const activeRightPanel = ref<"chat" | "ai" | "agent">("chat");
 const editorRef = ref<InstanceType<typeof DocumentEditor> | null>(null);
 const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null);
 
@@ -629,7 +642,7 @@ const formatDate = (dateStr?: string) => {
 }
 .right-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--line);
