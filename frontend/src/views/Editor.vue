@@ -22,6 +22,18 @@
           </svg>
           <span>版本历史</span>
         </button>
+        <button
+          v-if="canShare"
+          class="header-btn share-header-btn"
+          @click="showShare = true"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+            <polyline points="16 6 12 2 8 6" />
+            <line x1="12" y1="2" x2="12" y2="15" />
+          </svg>
+          <span>分享</span>
+        </button>
       </div>
     </header>
 
@@ -165,16 +177,23 @@
         </div>
       </aside>
     </div>
+    <ShareDialog
+      v-if="showShare && documentStore.currentDocument"
+      :document-id="documentStore.currentDocument.id"
+      :title="documentStore.currentDocument.title"
+      @close="showShare = false"
+    />
   </main>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
 import ChatPanel from "../components/ChatPanel.vue";
 import DocumentEditor from "../components/DocumentEditor.vue";
 import UserList from "../components/UserList.vue";
+import ShareDialog from "../components/ShareDialog.vue";
 import { fetchMessages, getDocument, getSnapshots, restoreSnapshot, saveDocument, updateDocument } from "../api/document";
 import { CollabSocket } from "../api/websocket";
 import { useDocumentStore, useUserStore } from "../store";
@@ -210,6 +229,10 @@ const socket = new CollabSocket();
 const saveStatus = ref<"saved" | "saving" | "unsaved">("saved");
 const showInfo = ref(false);
 const showHistory = ref(false);
+const showShare = ref(false);
+const canShare = computed(
+  () => documentStore.currentDocument?.permission === "owner"
+);
 const snapshots = ref<SnapshotItem[]>([]);
 const loadingHistory = ref(false);
 const activeSnapshot = ref<SnapshotItem | null>(null);

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.models.chat_message import ChatMessage
@@ -9,6 +10,15 @@ from app.services.document_service import DocumentService
 from app.utils.dependencies import get_current_user_id
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+class ShareUserRequest(BaseModel):
+    username: str
+    permission: str = "view"
+
+
+class SharePermissionRequest(BaseModel):
+    permission: str = "view"
 
 
 @router.get("")
@@ -103,6 +113,65 @@ def restore_snapshot(doc_id: int, snapshot_id: int,
                      user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
         result = DocumentService(db).restore_snapshot(snapshot_id, doc_id, user_id)
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+# ==================== 分享相关 ====================
+
+@router.get("/{doc_id}/share/info")
+def get_share_info(doc_id: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    try:
+        result = DocumentService(db).get_share_info(doc_id, user_id)
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.post("/{doc_id}/share")
+def get_share_link(doc_id: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    try:
+        result = DocumentService(db).get_or_create_share_link(doc_id, user_id)
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.put("/{doc_id}/share")
+def update_share_permission(doc_id: int, body: SharePermissionRequest,
+                            user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    try:
+        result = DocumentService(db).set_share_permission(doc_id, user_id, body.permission)
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.delete("/{doc_id}/share")
+def revoke_share(doc_id: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    try:
+        result = DocumentService(db).revoke_share_link(doc_id, user_id)
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.post("/{doc_id}/share/users")
+def share_to_user(doc_id: int, body: ShareUserRequest,
+                  user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    try:
+        result = DocumentService(db).share_with_user(doc_id, user_id, body.username, body.permission)
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.delete("/{doc_id}/share/users/{target_user_id}")
+def remove_share_user(doc_id: int, target_user_id: int,
+                      user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    try:
+        result = DocumentService(db).unshare_user(doc_id, user_id, target_user_id)
         return ApiResponse.ok(result)
     except ValueError as e:
         return ApiResponse.fail(str(e))

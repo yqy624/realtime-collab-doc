@@ -90,6 +90,8 @@ async def websocket_endpoint(ws: WebSocket):
 
             except ValueError as e:
                 await _send_ws(ws, {"type": "ERROR", "message": str(e)})
+            except PermissionError as e:
+                await _send_ws(ws, {"type": "ERROR", "message": str(e)})
 
     except WebSocketDisconnect:
         pass
@@ -125,7 +127,7 @@ def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
     })
     try:
         svc = DocumentService(db)
-        doc = svc.find_entity(doc_id)
+        doc = svc.find_accessible(doc_id, user.id)
         _send_ws(ws, {
             "type": "SYNC",
             "documentId": doc.id,
@@ -153,6 +155,11 @@ def _handle_edit(db, doc_id: int, user: User, op_data: dict):
 
     svc = DocumentService(db)
     doc = svc.find_entity(doc_id)
+
+    # 权限校验：仅 owner / edit 权限可编辑，view 权限拒绝
+    perm = svc._get_user_permission(doc, user.id)
+    if perm not in ("owner", "edit"):
+        raise PermissionError("当前用户仅有查看权限")
 
     incoming = _to_ot_op(op_data)
     base_revision = incoming.revision

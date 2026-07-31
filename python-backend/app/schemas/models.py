@@ -36,10 +36,29 @@ class DocumentDTO(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     creatorId: Optional[int] = None
+    creatorName: Optional[str] = None
     isPublic: Optional[bool] = None
     revision: Optional[int] = None
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
+    permission: Optional[str] = None  # owner | edit | view
+    shareToken: Optional[str] = None
+    sharePermission: Optional[str] = None
+
+
+class ShareUserDTO(BaseModel):
+    id: Optional[int] = None
+    username: Optional[str] = None
+    avatarUrl: Optional[str] = None
+    permission: Optional[str] = None
+
+
+class ShareInfoDTO(BaseModel):
+    shareToken: Optional[str] = None
+    sharePermission: Optional[str] = None  # 链接权限
+    shareUrl: Optional[str] = None
+    isPublic: Optional[bool] = None
+    users: Optional[list[ShareUserDTO]] = None  # 指定分享的用户
 
 
 class ChatMessageDTO(BaseModel):
