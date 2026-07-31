@@ -98,7 +98,28 @@ const readEditorText = () => {
   const text = editor.value?.innerText ?? "";
   return text.trim().length === 0 ? "" : text;
 };
-defineExpose({ getText: readEditorText });
+const getSelectionInfo = () => {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !editor.value) return null;
+  const range = selection.getRangeAt(0);
+  if (!editor.value.contains(range.startContainer) || !editor.value.contains(range.endContainer)) {
+    return null;
+  }
+
+  const startRange = range.cloneRange();
+  startRange.selectNodeContents(editor.value);
+  startRange.setEnd(range.startContainer, range.startOffset);
+  const endRange = range.cloneRange();
+  endRange.selectNodeContents(editor.value);
+  endRange.setEnd(range.endContainer, range.endOffset);
+
+  return {
+    text: range.toString(),
+    start: startRange.toString().length,
+    end: endRange.toString().length
+  };
+};
+defineExpose({ getText: readEditorText, getSelectionInfo });
 const localTitle = ref(props.title);
 let lastContent = props.content ?? "";
 let debounceTimer: number | null = null;

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.database import Base, engine, ensure_document_share_columns, get_db
 from app.models.document import Document
-from app.routers import auth, documents
+from app.routers import ai, auth, documents
 from app.routers.ws_handler import websocket_endpoint
 from app.utils.jwt import verify_token
 from app.init_data import init_data
@@ -61,6 +61,7 @@ async def jwt_middleware(request: Request, call_next):
 # REST routers
 app.include_router(auth.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(ai.router, prefix="/api")
 
 # WebSocket endpoint
 @app.websocket("/api/ws")

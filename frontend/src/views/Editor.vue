@@ -54,15 +54,43 @@
         @cursor-change="sendCursor"
         @submit-version="handleSubmitVersion"
       />
-      <ChatPanel
-        ref="chatPanelRef"
-        :messages="messages"
-        :online-users="onlineUsers"
-        :current-username="userStore.username"
-        :unread-mentions="unreadMentions"
-        @send="sendChat"
-        @chat-focus="clearUnreadMentions"
-      />
+      <div class="right-panel">
+        <nav class="right-tabs" aria-label="协作工具">
+          <button
+            class="right-tab"
+            :class="{ active: activeRightPanel === 'chat' }"
+            type="button"
+            @click="activeRightPanel = 'chat'"
+          >
+            聊天
+          </button>
+          <button
+            class="right-tab"
+            :class="{ active: activeRightPanel === 'ai' }"
+            type="button"
+            @click="activeRightPanel = 'ai'"
+          >
+            AI 助手
+          </button>
+        </nav>
+        <ChatPanel
+          v-if="activeRightPanel === 'chat'"
+          ref="chatPanelRef"
+          :messages="messages"
+          :online-users="onlineUsers"
+          :current-username="userStore.username"
+          :unread-mentions="unreadMentions"
+          @send="sendChat"
+          @chat-focus="clearUnreadMentions"
+        />
+        <AIAssistantPanel
+          v-else
+          :document-id="documentId"
+          :get-selection="getEditorSelection"
+          :append-to-document="appendAIResult"
+          :replace-document-selection="replaceAISelection"
+        />
+      </div>
     </section>
 
     <div v-if="showInfo" class="overlay" @click.self="showInfo = false">
@@ -192,6 +220,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
 import ChatPanel from "../components/ChatPanel.vue";
+import AIAssistantPanel from "../components/AIAssistantPanel.vue";
 import DocumentEditor from "../components/DocumentEditor.vue";
 import UserList from "../components/UserList.vue";
 import ShareDialog from "../components/ShareDialog.vue";
@@ -238,6 +267,7 @@ const snapshots = ref<SnapshotItem[]>([]);
 const loadingHistory = ref(false);
 const activeSnapshot = ref<SnapshotItem | null>(null);
 const unreadMentions = ref(0);
+const activeRightPanel = ref<"chat" | "ai">("chat");
 const editorRef = ref<InstanceType<typeof DocumentEditor> | null>(null);
 const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null);
 
@@ -417,6 +447,48 @@ const sendChat = (message: string) => {
   socket.send({ type: "CHAT", documentId, userId: userStore.userId, chatMessage: message });
 };
 
+type SelectionInfo = { text: string; start: number; end: number };
+
+const getEditorSelection = (): SelectionInfo | null => {
+  return editorRef.value?.getSelectionInfo?.() ?? null;
+};
+
+const sendFullSync = (content: string) => {
+  if (!documentStore.currentDocument) return;
+  documentStore.setCurrentDocument({
+    ...documentStore.currentDocument,
+    content
+  });
+  saveStatus.value = "unsaved";
+  socket.send({
+    type: "EDIT",
+    documentId,
+    userId: userStore.userId,
+    operation: {
+      type: "FULL_SYNC",
+      position: 0,
+      content,
+      revision: documentStore.currentDocument.revision,
+      clientId: `${userStore.userId ?? "guest"}-ai`
+    }
+  });
+};
+
+const appendAIResult = (content: string) => {
+  if (!content.trim() || !documentStore.currentDocument) return;
+  const current = editorRef.value?.getText() ?? documentStore.currentDocument.content ?? "";
+  const separator = current.trim() ? "\n\n" : "";
+  sendFullSync(`${current}${separator}${content.trim()}`);
+};
+
+const replaceAISelection = (content: string, selection: SelectionInfo) => {
+  if (!content.trim() || !documentStore.currentDocument) return;
+  const current = editorRef.value?.getText() ?? documentStore.currentDocument.content ?? "";
+  const start = Math.max(0, Math.min(selection.start, current.length));
+  const end = Math.max(start, Math.min(selection.end, current.length));
+  sendFullSync(`${current.slice(0, start)}${content.trim()}${current.slice(end)}`);
+};
+
 const updateDocumentVisibility = (isPublic: boolean) => {
   if (!documentStore.currentDocument) return;
   documentStore.setCurrentDocument({
@@ -548,6 +620,35 @@ const formatDate = (dateStr?: string) => {
   grid-template-columns: 280px minmax(0, 1fr) 360px;
   gap: 20px;
   align-items: start;
+}
+.right-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-height: 620px;
+}
+.right-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.right-tab {
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.right-tab.active {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 .left-rail {
   display: grid;
