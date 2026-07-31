@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.models.database import Base, engine
+from app.models.database import Base, engine, get_db
 from app.models.document import Document
 from app.routers import auth, documents
 from app.routers.ws_handler import websocket_endpoint
@@ -39,7 +39,7 @@ app.add_middleware(
 async def jwt_middleware(request: Request, call_next):
     # Skip auth routes and WebSocket
     path = request.url.path
-    if path.startswith("/api/auth/") or path.startswith("/api/ws"):
+    if path.startswith("/api/auth/") or path.startswith("/api/ws") or path.startswith("/api/share/"):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")

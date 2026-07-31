@@ -10,6 +10,17 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      "/new/api/ws": {
+        target: websocketOrigin,
+        ws: true,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/new/, "")
+      },
+      "/new/api": {
+        target: backendOrigin,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/new/, "")
+      },
       "/api/ws": {
         target: websocketOrigin,
         ws: true,
