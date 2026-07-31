@@ -5,7 +5,7 @@ import RegisterView from "../views/Register.vue";
 import EditorView from "../views/Editor.vue";
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory("/new/"),
   routes: [
     { path: "/", redirect: "/home" },
     { path: "/login", component: LoginView },
