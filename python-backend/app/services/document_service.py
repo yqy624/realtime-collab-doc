@@ -6,6 +6,7 @@ from app.models.document import Document
 from app.models.document_share import DocumentShare
 from app.models.document_snapshot import DocumentSnapshot
 from app.models.chat_message import ChatMessage
+from app.services.rag_service import RAGService
 
 
 class DocumentService:
@@ -26,6 +27,7 @@ class DocumentService:
         self.db.add(doc)
         self.db.commit()
         self.db.refresh(doc)
+        RAGService(self.db).ensure_document_index(doc)
         return self._to_dto(doc)
 
     def update_document(self, doc_id: int, data: dict, user_id: int) -> dict:
@@ -41,6 +43,7 @@ class DocumentService:
         doc.updated_at = datetime.now()
         self.db.commit()
         self.db.refresh(doc)
+        RAGService(self.db).ensure_document_index(doc)
         return self._to_dto(doc)
 
     def get_document(self, doc_id: int, user_id: int) -> dict:
@@ -50,6 +53,8 @@ class DocumentService:
     def delete_document(self, doc_id: int, user_id: int):
         doc = self._find_owned(doc_id, user_id)
         self.db.query(DocumentShare).filter(DocumentShare.document_id == doc_id).delete()
+        from app.models.document_chunk import DocumentChunk
+        self.db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).delete()
         self.db.delete(doc)
         self.db.commit()
 
@@ -172,6 +177,7 @@ class DocumentService:
                 doc.content = data["content"]
             doc.updated_at = datetime.now()
             self.db.commit()
+            RAGService(self.db).ensure_document_index(doc)
 
         snapshot = DocumentSnapshot(
             document_id=doc.id,

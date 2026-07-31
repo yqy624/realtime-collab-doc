@@ -12,9 +12,30 @@
 - AI 助手：集成 Ollama 本地大模型（默认 `granite4.1:8b`），可在文档内对话
 - 子路径部署：支持 Nginx 反向代理挂载在 `/new/` 路径
 
+## RAG and Agent Workflow
+
+The knowledge base is implemented as a local, deterministic RAG pipeline:
+
+1. Documents are split into paragraph-aware chunks and stored in `document_chunks`.
+2. Search filters documents by owner, public visibility, or explicit sharing permission.
+3. The lexical retriever returns ranked chunks with document title, chunk index, score, and matched terms.
+4. The LangGraph Agent runs `retrieve_chunks -> route_evidence -> build_context -> generate_answer -> format_citations`.
+5. If no evidence is retrieved, the Agent refuses to answer without calling Ollama.
+
+API examples:
+
+```text
+GET  /api/ai/knowledge/search?q=collaboration&topK=8
+POST /api/ai/agent/query
+     {"question":"Which documents mention collaboration risks?","topK":6}
+```
+
+The first version uses lexical retrieval so it can run without a GPU or embedding model. The retriever can later be extended with embeddings and hybrid ranking without changing the frontend contract or Agent graph.
+
 ## Tech Stack
 
 - Backend: Python 3.11+ / FastAPI / SQLAlchemy 2 / WebSocket / python-jose / bcrypt
+- Agent: LangGraph StateGraph / local lexical retrieval / Ollama
 - Frontend: Vue 3 / TypeScript / Vite / Pinia / Element Plus
 - Database: MySQL 8
 - Deployment: Docker Compose + Nginx

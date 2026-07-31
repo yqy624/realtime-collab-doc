@@ -4,6 +4,7 @@ from .document_share import DocumentShare
 from .document_snapshot import DocumentSnapshot
 from .chat_message import ChatMessage
 from .ai_message import AIMessage
+from .document_chunk import DocumentChunk
 from .operation_log import OperationLog, OperationType
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "DocumentSnapshot",
     "ChatMessage",
     "AIMessage",
+    "DocumentChunk",
     "OperationLog",
     "OperationType",
 ]

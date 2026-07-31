@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.schemas.models import ApiResponse
 from app.services.ai_service import AIAgentRunner, ResultFormatter
+from app.services.agent_graph import KnowledgeAgent
 from app.services.document_service import DocumentService
+from app.services.rag_service import RAGService
 from app.utils.dependencies import get_current_user_id
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -30,8 +32,55 @@ class StreamRequest(BaseModel):
     mode: str = "polish"
 
 
+class KnowledgeAgentRequest(BaseModel):
+    question: str
+    documentId: int | None = None
+    topK: int = 6
+
+
 def _get_document(doc_id: int, user_id: int, db: Session):
     return DocumentService(db).find_accessible(doc_id, user_id)
+
+
+@router.get("/knowledge/search")
+def search_knowledge(
+    q: str,
+    documentId: int | None = None,
+    topK: int = 8,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        if not q.strip():
+            raise ValueError("搜索关键词不能为空")
+        return ApiResponse.ok(
+            RAGService(db).search_response(
+                q,
+                user_id,
+                document_id=documentId,
+                top_k=topK,
+            )
+        )
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.post("/agent/query")
+def query_knowledge_agent(
+    body: KnowledgeAgentRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = KnowledgeAgent(db).run(
+            body.question,
+            user_id,
+            document_id=body.documentId,
+            top_k=body.topK,
+        )
+        return ApiResponse.ok(result)
+    except (ValueError, ConnectionError, RuntimeError) as exc:
+        return ApiResponse.fail(str(exc))
 
 
 @router.post("/documents/{doc_id}/ask")
