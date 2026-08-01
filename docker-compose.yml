@@ -15,6 +15,32 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
 
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-granite4.1:8b}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull \"$${OLLAMA_MODEL}\""]
+    restart: "no"
+
   backend:
     build:
       context: ./python-backend
@@ -22,11 +48,19 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     restart: on-failure
     environment:
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-change-me}@mysql:3306/collab_doc
-      JWT_SECRET: ${APP_JWT_SECRET:-dev-only-jwt-secret-change-me-1234567890}
+      JWT_SECRET: ${APP_JWT_SECRET:?APP_JWT_SECRET must be set for Docker deployment}
       JWT_EXPIRATION: 86400000
+      APP_ENV: ${APP_ENV:-production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-granite4.1:8b}
     ports:
       - "${BACKEND_HOST_PORT:-8082}:8082"
 
@@ -42,3 +76,4 @@ services:
 
 volumes:
   mysql-data:
+  ollama-data:

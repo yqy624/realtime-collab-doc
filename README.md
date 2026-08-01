@@ -97,6 +97,11 @@ export APP_JWT_SECRET="replace-with-a-long-random-secret"
 docker compose up -d --build
 ```
 
+Docker deployment requires `APP_JWT_SECRET`; the backend refuses to start in
+production when the development JWT secret is used. Compose also starts Ollama
+and pulls `OLLAMA_MODEL` (default: `granite4.1:8b`) into the persistent
+`ollama-data` volume.
+
 端口映射（可通过环境变量覆盖）：
 
 | Service  | Host Port | Container Port |
