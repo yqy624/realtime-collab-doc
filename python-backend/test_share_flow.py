@@ -1,7 +1,9 @@
-# -*- coding: utf-8 -*-
-"""验证分享后文档对目标用户可见"""
 import json
+import urllib.error
 import urllib.request
+
+import pytest
+
 
 BASE = "http://localhost:3000/new/api"
 
@@ -13,29 +15,46 @@ def api(method, path, body=None, token=None):
         req.add_header("Authorization", f"Bearer {token}")
     if body:
         req.data = json.dumps(body).encode()
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=3) as resp:
         return json.loads(resp.read())
 
 
-def login(u, p):
-    return api("POST", "/auth/login", {"username": u, "password": p})["data"]["token"]
+def require_running_server():
+    try:
+        api("GET", "/health")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        pytest.skip(f"integration API server is not running at {BASE}: {exc}")
 
 
-t1 = login("user1", "password123")
-t2 = login("user2", "password123")
-print("两个用户登录成功")
+def login(username, password):
+    return api("POST", "/auth/login", {"username": username, "password": password})[
+        "data"
+    ]["token"]
 
-# user1 创建文档
-doc = api("POST", "/documents", {"title": "协作测试文档", "content": "hi", "isPublic": False}, t1)
-doc_id = doc["data"]["id"]
-print(f"user1 创建文档 id={doc_id}")
 
-# user1 分享给 user2
-r = api("POST", f"/documents/{doc_id}/share/users", {"username": "user2", "permission": "edit"}, t1)
-print("分享后 users:", len(r["data"]["users"]))
+@pytest.mark.integration
+def test_shared_document_is_visible_to_target_user():
+    require_running_server()
 
-# user2 看列表
-docs = api("GET", "/documents", token=t2)
-titles = [d["title"] for d in docs["data"]]
-print("user2 文档列表:", titles)
-print("协作测试文档可见:", "协作测试文档" in titles)
+    owner_token = login("user1", "password123")
+    target_token = login("user2", "password123")
+
+    doc = api(
+        "POST",
+        "/documents",
+        {"title": "Collaboration visibility test", "content": "hi", "isPublic": False},
+        owner_token,
+    )
+    doc_id = doc["data"]["id"]
+
+    api(
+        "POST",
+        f"/documents/{doc_id}/share/users",
+        {"username": "user2", "permission": "edit"},
+        owner_token,
+    )
+
+    docs = api("GET", "/documents", token=target_token)
+    titles = [item["title"] for item in docs["data"]]
+
+    assert "Collaboration visibility test" in titles

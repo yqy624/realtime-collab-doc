@@ -1,13 +1,24 @@
-# -*- coding: utf-8 -*-
-"""测试 WebSocket 在线人数广播"""
 import json
-import time
 import threading
-import websocket
+import time
+import urllib.error
 import urllib.request
+
+import pytest
+import websocket
+
 
 BASE = "http://localhost:3000/new/api"
 WS = "ws://localhost:3000/new/api/ws"
+
+
+def require_running_server():
+    req = urllib.request.Request(BASE + "/health", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=3):
+            return
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        pytest.skip(f"integration API server is not running at {BASE}: {exc}")
 
 
 def login(username, password):
@@ -16,46 +27,68 @@ def login(username, password):
         data=json.dumps({"username": username, "password": password}).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=3) as resp:
         return json.loads(resp.read())["data"]["token"]
+
+
+def create_document(token):
+    req = urllib.request.Request(
+        BASE + "/documents",
+        data=json.dumps(
+            {
+                "title": f"WebSocket integration test {time.time_ns()}",
+                "content": "initial",
+                "isPublic": False,
+            }
+        ).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        return json.loads(resp.read())["data"]["id"]
 
 
 def connect_user(name, token, doc_id, results):
     ws = websocket.WebSocket()
-    ws.connect(f"{WS}?token={token}")
-    # 发 JOIN
-    ws.send(json.dumps({"type": "JOIN", "documentId": doc_id}))
-    # 收消息 3 秒
-    end = time.time() + 4
-    while time.time() < end:
-        ws.settimeout(1)
-        try:
-            msg = ws.recv()
-            results.append(f"[{name}] {msg[:120]}")
-        except Exception:
-            pass
-    ws.close()
+    try:
+        ws.connect(f"{WS}?token={token}", timeout=3)
+        ws.send(json.dumps({"type": "JOIN", "documentId": doc_id}))
+        end = time.time() + 4
+        while time.time() < end:
+            ws.settimeout(1)
+            try:
+                msg = ws.recv()
+                results.append(f"[{name}] {msg[:120]}")
+            except Exception:
+                pass
+    finally:
+        ws.close()
 
 
-# 登录两个用户
-t1 = login("admin", "password123")
-t2 = login("user1", "password123")
-print("两个用户登录成功")
+@pytest.mark.integration
+def test_websocket_presence_broadcasts_join_events():
+    require_running_server()
 
-results = []
-doc_id = 2  # 测试文档
+    admin_token = login("admin", "password123")
+    user_token = login("user1", "password123")
+    doc_id = create_document(admin_token)
 
-# 用户1先连接
-th1 = threading.Thread(target=connect_user, args=("admin", t1, doc_id, results))
-th1.start()
-time.sleep(1)
+    results = []
+    first = threading.Thread(
+        target=connect_user,
+        args=("admin", admin_token, doc_id, results),
+    )
+    second = threading.Thread(
+        target=connect_user,
+        args=("user1", user_token, doc_id, results),
+    )
 
-# 用户2再连接
-th2 = threading.Thread(target=connect_user, args=("user1", t2, doc_id, results))
-th2.start()
-th2.join(timeout=6)
-th1.join(timeout=8)
+    first.start()
+    time.sleep(1)
+    second.start()
+    second.join(timeout=6)
+    first.join(timeout=8)
 
-for r in results:
-    print(r)
-print("=== 测试完成 ===")
+    assert any('"type":"PRESENCE"' in result or '"type": "PRESENCE"' in result for result in results)
