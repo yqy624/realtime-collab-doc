@@ -9,6 +9,7 @@ from app.models.database import get_db
 from app.schemas.models import ApiResponse
 from app.services.ai_service import AIAgentRunner, ResultFormatter
 from app.services.agent_graph import KnowledgeAgent
+from app.services.agent_runtime import AgentRuntime
 from app.services.document_service import DocumentService
 from app.services.rag_service import RAGService
 from app.utils.dependencies import get_current_user_id
@@ -36,6 +37,15 @@ class KnowledgeAgentRequest(BaseModel):
     question: str
     documentId: int | None = None
     topK: int = 6
+
+
+class AgentRunRequest(BaseModel):
+    goal: str
+    documentId: int | None = None
+
+
+class AgentApprovalRequest(BaseModel):
+    approved: bool
 
 
 def _get_document(doc_id: int, user_id: int, db: Session):
@@ -81,6 +91,74 @@ def query_knowledge_agent(
         return ApiResponse.ok(result)
     except (ValueError, ConnectionError, RuntimeError) as exc:
         return ApiResponse.fail(str(exc))
+
+
+@router.get("/agent/tools")
+def list_agent_tools():
+    return ApiResponse.ok(AgentRuntime.tool_specs())
+
+
+@router.get("/agent/runs")
+def list_agent_runs(
+    documentId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if documentId is not None:
+        _get_document(documentId, user_id, db)
+    return ApiResponse.ok(AgentRuntime(db).list_runs(user_id, documentId))
+
+
+@router.post("/agent/run")
+def run_agent(
+    body: AgentRunRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = AgentRuntime(db).start(
+            body.goal,
+            user_id,
+            document_id=body.documentId,
+        )
+        return ApiResponse.ok(result)
+    except (ValueError, ConnectionError, RuntimeError) as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.get("/agent/runs/{run_id}")
+def get_agent_run(
+    run_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(AgentRuntime(db).get_run(run_id, user_id))
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.post("/agent/runs/{run_id}/approval")
+def approve_agent_run(
+    run_id: int,
+    body: AgentApprovalRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = AgentRuntime(db).approve(run_id, user_id, body.approved)
+        return ApiResponse.ok(result)
+    except (ValueError, ConnectionError, RuntimeError) as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.get("/agent/memories")
+def list_agent_memories(
+    documentId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return ApiResponse.ok(AgentRuntime(db).list_memories(user_id, documentId))
 
 
 @router.post("/documents/{doc_id}/ask")

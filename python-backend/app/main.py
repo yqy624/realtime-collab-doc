@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.config import DEFAULT_JWT_SECRET, settings
 from app.models.database import Base, engine, ensure_document_share_columns, get_db
 from app.models.document import Document
 from app.routers import ai, auth, documents
@@ -15,6 +16,11 @@ from app.init_data import init_data
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if (
+        settings.app_env.lower() in {"production", "prod"}
+        and settings.jwt_secret == DEFAULT_JWT_SECRET
+    ):
+        raise RuntimeError("JWT_SECRET must be overridden in production")
     # Create tables on startup
     Base.metadata.create_all(bind=engine)
     ensure_document_share_columns()
@@ -25,11 +31,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+allowed_origins = [
+    origin.strip()
+    for origin in settings.allowed_origins.split(",")
+    if origin.strip()
+]
+allow_all_origins = allowed_origins == ["*"]
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -40,7 +53,12 @@ app.add_middleware(
 async def jwt_middleware(request: Request, call_next):
     # Skip auth routes and WebSocket
     path = request.url.path
-    if path.startswith("/api/auth/") or path.startswith("/api/ws") or path.startswith("/api/share/"):
+    if (
+        path.startswith("/api/auth/")
+        or path.startswith("/api/health")
+        or path.startswith("/api/ws")
+        or path.startswith("/api/share/")
+    ):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
@@ -62,6 +80,12 @@ async def jwt_middleware(request: Request, call_next):
 app.include_router(auth.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+
+
+@app.get("/api/health")
+def health_check():
+    return {"success": True, "data": {"status": "ok"}, "message": "ok"}
+
 
 # WebSocket endpoint
 @app.websocket("/api/ws")

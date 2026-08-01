@@ -67,22 +67,38 @@ async def websocket_endpoint(ws: WebSocket):
 
             try:
                 if msg_type == "JOIN":
-                    current_doc_id = doc_id
-                    _register_connection(ws, doc_id)
+                    DocumentService(db).find_accessible(doc_id, user.id)
+                    if current_doc_id == doc_id:
+                        await _send_ws(ws, {
+                            "type": "ERROR",
+                            "message": "Already joined to this document",
+                        })
+                        continue
+                    if current_doc_id is not None:
+                        old_doc_id = current_doc_id
+                        _unregister_connection(ws, old_doc_id)
+                        await _handle_leave(db, old_doc_id, user)
+                        current_doc_id = None
                     await _handle_join(ws, db, doc_id, user)
+                    current_doc_id = doc_id
 
                 elif msg_type == "LEAVE":
+                    if current_doc_id != doc_id:
+                        raise PermissionError("Join this document before leaving it")
                     _unregister_connection(ws, doc_id)
                     await _handle_leave(db, doc_id, user)
                     current_doc_id = None
 
                 elif msg_type == "EDIT":
+                    _assert_joined_document(db, doc_id, user, current_doc_id)
                     await _handle_edit(db, doc_id, user, msg.get("operation") or {})
 
                 elif msg_type == "CHAT":
+                    _assert_joined_document(db, doc_id, user, current_doc_id)
                     await _handle_chat(db, doc_id, user, msg.get("chatMessage") or "")
 
                 elif msg_type == "CURSOR":
+                    _assert_joined_document(db, doc_id, user, current_doc_id)
                     await _handle_cursor(doc_id, user, msg.get("cursorPosition"))
 
                 else:
@@ -99,6 +115,7 @@ async def websocket_endpoint(ws: WebSocket):
         # Cleanup
         if current_doc_id:
             _unregister_connection(ws, current_doc_id)
+            await _handle_leave(db, current_doc_id, user)
         _ws_user.pop(id(ws), None)
         db.close()
 
@@ -118,6 +135,9 @@ def _unregister_connection(ws: WebSocket, doc_id: int):
 
 
 async def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
+    svc = DocumentService(db)
+    doc = svc.find_accessible(doc_id, user.id)
+    _register_connection(ws, doc_id)
     online = session_manager.join(doc_id, user.username)
     await _broadcast(doc_id, {
         "type": "PRESENCE",
@@ -125,18 +145,13 @@ async def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
         "onlineUsers": online,
         "timestamp": datetime.now().isoformat(),
     })
-    try:
-        svc = DocumentService(db)
-        doc = svc.find_accessible(doc_id, user.id)
-        await _send_ws(ws, {
-            "type": "SYNC",
-            "documentId": doc.id,
-            "content": doc.content,
-            "revision": doc.revision,
-            "timestamp": datetime.now().isoformat(),
-        })
-    except ValueError:
-        pass
+    await _send_ws(ws, {
+        "type": "SYNC",
+        "documentId": doc.id,
+        "content": doc.content,
+        "revision": doc.revision,
+        "timestamp": datetime.now().isoformat(),
+    })
 
 
 async def _handle_leave(db, doc_id: int, user: User):
@@ -191,6 +206,7 @@ async def _handle_edit(db, doc_id: int, user: User, op_data: dict):
 
 
 async def _handle_chat(db, doc_id: int, user: User, chat_text: str):
+    DocumentService(db).find_accessible(doc_id, user.id)
     if not chat_text.strip():
         raise ValueError("消息不能为空")
 
@@ -229,6 +245,12 @@ async def _handle_cursor(doc_id: int, user: User, cursor_pos):
         "cursorPosition": cursor_pos,
         "timestamp": datetime.now().isoformat(),
     })
+
+
+def _assert_joined_document(db, doc_id: int, user: User, current_doc_id: int | None) -> None:
+    if current_doc_id != doc_id:
+        raise PermissionError("Join this document before sending messages")
+    DocumentService(db).find_accessible(doc_id, user.id)
 
 
 def _extract_mentions(text: str) -> set[str]:

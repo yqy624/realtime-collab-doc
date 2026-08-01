@@ -48,7 +48,7 @@ class DocumentService:
 
     def get_document(self, doc_id: int, user_id: int) -> dict:
         doc = self._find_accessible(doc_id, user_id)
-        return self._to_dto(doc)
+        return self._to_dto(doc, viewer_id=user_id)
 
     def delete_document(self, doc_id: int, user_id: int):
         doc = self._find_owned(doc_id, user_id)
@@ -169,7 +169,8 @@ class DocumentService:
     # ==================== 快照 ====================
 
     def save_snapshot(self, doc_id: int, data: dict | None, user_id: int) -> dict:
-        doc = self._find_accessible(doc_id, user_id)
+        # Saving a snapshot may mutate the document and must be write-authorized.
+        doc = self._find_editable(doc_id, user_id)
         if data:
             if data.get("title") and data["title"].strip():
                 doc.title = data["title"]
@@ -201,14 +202,17 @@ class DocumentService:
         snapshot = self.db.query(DocumentSnapshot).filter(DocumentSnapshot.id == snapshot_id).first()
         if not snapshot:
             raise ValueError("Snapshot not found")
-        doc = self._find_owned(snapshot.document_id, user_id)
+        if snapshot.document_id != doc_id:
+            raise ValueError("Snapshot does not belong to this document")
+        doc = self._find_owned(doc_id, user_id)
         doc.title = snapshot.title
         doc.content = snapshot.content
         doc.revision = snapshot.revision
         doc.updated_at = datetime.now()
         self.db.commit()
         self.db.refresh(doc)
-        return self._to_dto(doc)
+        RAGService(self.db).ensure_document_index(doc)
+        return self._to_dto(doc, viewer_id=user_id)
 
     # ==================== 权限判断 ====================
 
@@ -242,6 +246,13 @@ class DocumentService:
         doc = self.find_entity(doc_id)
         if doc.creator_id != user_id:
             raise ValueError("No permission to operate on this document")
+        return doc
+
+    def _find_editable(self, doc_id: int, user_id: int) -> Document:
+        doc = self.find_entity(doc_id)
+        permission = self._get_user_permission(doc, user_id)
+        if permission not in ("owner", "edit"):
+            raise ValueError("No permission to edit this document")
         return doc
 
     def _find_accessible(self, doc_id: int, user_id: int) -> Document:

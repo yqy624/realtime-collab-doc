@@ -2,6 +2,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from app.models.ai_message import AIMessage
 from app.services.ai_service import OllamaLLMClient
 from app.services.rag_service import RAGService, SearchHit
 
@@ -46,7 +47,7 @@ class KnowledgeAgent:
                 "top_k": top_k,
             }
         )
-        return {
+        result = {
             "question": state["question"],
             "answer": state.get("answer", ""),
             "citations": state.get("citations", []),
@@ -64,6 +65,50 @@ class KnowledgeAgent:
                 "retrievedChunks": len(state.get("hits", [])),
             },
         }
+        self._save_history(
+            user_id=user_id,
+            document_id=document_id,
+            question=result["question"],
+            answer=result["answer"],
+            model=result["model"],
+            elapsed_ms=result["elapsedMs"],
+        )
+        return result
+
+    def _save_history(
+        self,
+        user_id: int,
+        document_id: int | None,
+        question: str,
+        answer: str,
+        model: str,
+        elapsed_ms: int,
+    ) -> None:
+        if document_id is None:
+            return
+        self.db.add_all(
+            [
+                AIMessage(
+                    document_id=document_id,
+                    user_id=user_id,
+                    role="user",
+                    action="agent_query",
+                    content=question,
+                    model=model,
+                    elapsed_ms=0,
+                ),
+                AIMessage(
+                    document_id=document_id,
+                    user_id=user_id,
+                    role="assistant",
+                    action="agent_query",
+                    content=answer or "",
+                    model=model,
+                    elapsed_ms=elapsed_ms,
+                ),
+            ]
+        )
+        self.db.commit()
 
     def _build_graph(self):
         graph = StateGraph(AgentState)

@@ -59,16 +59,12 @@ class RAGService:
             return len(existing)
         if not content.strip():
             if existing:
-                self.db.query(DocumentChunk).filter(
-                    DocumentChunk.document_id == document.id
-                ).delete(synchronize_session=False)
+                self._delete_loaded_chunks(document.id, existing)
                 self.db.commit()
             return 0
 
         chunks = self.split_text(content)
-        self.db.query(DocumentChunk).filter(
-            DocumentChunk.document_id == document.id
-        ).delete(synchronize_session=False)
+        self._delete_loaded_chunks(document.id, existing)
         self.db.add_all(
             [
                 DocumentChunk(
@@ -82,6 +78,13 @@ class RAGService:
         )
         self.db.commit()
         return len(chunks)
+
+    def _delete_loaded_chunks(self, document_id: int, chunks: list[DocumentChunk]) -> None:
+        for chunk in chunks:
+            self.db.expunge(chunk)
+        self.db.query(DocumentChunk).filter(
+            DocumentChunk.document_id == document_id
+        ).delete(synchronize_session=False)
 
     def search(
         self,

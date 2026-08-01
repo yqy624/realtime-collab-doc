@@ -6,6 +6,8 @@ from .chat_message import ChatMessage
 from .ai_message import AIMessage
 from .document_chunk import DocumentChunk
 from .operation_log import OperationLog, OperationType
+from .agent_memory import AgentMemory
+from .agent_run import AgentRun
 
 __all__ = [
     "User",
@@ -17,4 +19,6 @@ __all__ = [
     "DocumentChunk",
     "OperationLog",
     "OperationType",
+    "AgentMemory",
+    "AgentRun",
 ]
