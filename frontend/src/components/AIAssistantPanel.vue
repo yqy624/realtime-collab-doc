@@ -109,6 +109,10 @@ const props = defineProps<{
   replaceDocumentSelection: (content: string, selection: SelectionInfo) => void;
 }>();
 
+const emit = defineEmits<{
+  (e: "history-change"): void;
+}>();
+
 const rewriteModes: Array<{ label: string; value: RewriteMode }> = [
   { label: "润色选区", value: "polish" },
   { label: "扩写选区", value: "expand" },
@@ -158,6 +162,7 @@ const startStream = async (
       }
     });
     await loadHistory();
+    emit("history-change");
   } catch (error: any) {
     result.value = "";
     ElMessage.error(error?.message || error?.response?.data?.message || "AI 请求失败");

@@ -57,6 +57,57 @@ export interface KnowledgeAgentResult {
   };
 }
 
+export type AgentRunStatus =
+  | "planning"
+  | "executing"
+  | "awaiting_approval"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface AgentPlanStep {
+  id: string;
+  kind: "tool" | "model";
+  tool: string;
+  args: Record<string, unknown>;
+  reason: string;
+  status: string;
+  output?: Record<string, unknown>;
+}
+
+export interface AgentTraceEvent {
+  stepId: string;
+  kind: string;
+  tool: string;
+  status: string;
+  durationMs: number;
+  outputPreview?: unknown;
+}
+
+export interface AgentRun {
+  runId: number;
+  goal: string;
+  documentId?: number;
+  status: AgentRunStatus;
+  plan: AgentPlanStep[];
+  trace: AgentTraceEvent[];
+  memories: Array<Record<string, unknown>>;
+  result: string;
+  model: string;
+  error?: string | null;
+  pendingApproval?: AgentPlanStep | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AgentToolSpec {
+  name: string;
+  description: string;
+  readOnly: boolean;
+  requiresApproval: boolean;
+  inputSchema: Record<string, string>;
+}
+
 export const searchKnowledge = (
   query: string,
   options: { documentId?: number; topK?: number } = {}
@@ -78,6 +129,35 @@ export const queryKnowledgeAgent = (
     documentId: options.documentId,
     topK: options.topK ?? 6
   });
+
+export const runAgent = (goal: string, documentId?: number) =>
+  aiApi.post<{ success: boolean; data: AgentRun }>("/agent/run", {
+    goal,
+    documentId
+  });
+
+export const approveAgentRun = (runId: number, approved: boolean) =>
+  aiApi.post<{ success: boolean; data: AgentRun }>(
+    `/agent/runs/${runId}/approval`,
+    { approved }
+  );
+
+export const getAgentRun = (runId: number) =>
+  aiApi.get<{ success: boolean; data: AgentRun }>(`/agent/runs/${runId}`);
+
+export const getAgentRuns = (documentId?: number) =>
+  aiApi.get<{ success: boolean; data: AgentRun[] }>("/agent/runs", {
+    params: { documentId }
+  });
+
+export const getAgentTools = () =>
+  aiApi.get<{ success: boolean; data: AgentToolSpec[] }>("/agent/tools");
+
+export const getAgentMemories = (documentId?: number) =>
+  aiApi.get<{ success: boolean; data: Array<Record<string, unknown>> }>(
+    "/agent/memories",
+    { params: { documentId } }
+  );
 
 export const askAI = (documentId: number, question: string) =>
   aiApi.post(`/documents/${documentId}/ask`, { question });

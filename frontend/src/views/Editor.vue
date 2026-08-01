@@ -40,8 +40,47 @@
     <section v-if="documentStore.currentDocument" class="workspace">
       <div class="left-rail">
         <UserList :users="onlineUsers" />
+        <section class="history-card">
+          <div class="history-card-header">
+            <h3>用户聊天历史</h3>
+            <span>{{ userHistoryRecords.length }}</span>
+          </div>
+          <p v-if="userHistoryRecords.length === 0" class="history-empty">暂无用户聊天记录</p>
+          <button
+            v-for="record in userHistoryRecords"
+            :key="record.id"
+            class="history-record"
+            :class="{ active: activeHistory?.selectedId === record.id }"
+            type="button"
+            @click="openUserHistory(record.id)"
+          >
+            <strong>{{ record.title }}</strong>
+            <span>{{ record.preview }}</span>
+            <time v-if="record.createdAt">{{ formatShortDate(record.createdAt) }}</time>
+          </button>
+        </section>
+        <section class="history-card">
+          <div class="history-card-header">
+            <h3>AI / Agent 历史</h3>
+            <span>{{ aiAgentHistoryRecords.length }}</span>
+          </div>
+          <p v-if="aiAgentHistoryRecords.length === 0" class="history-empty">暂无 AI 或 Agent 记录</p>
+          <button
+            v-for="record in aiAgentHistoryRecords"
+            :key="record.id"
+            class="history-record"
+            :class="{ active: activeHistory?.selectedId === record.id }"
+            type="button"
+            @click="openAIAgentHistory(record.id)"
+          >
+            <strong>{{ record.title }}</strong>
+            <span>{{ record.preview }}</span>
+            <time v-if="record.createdAt">{{ formatShortDate(record.createdAt) }}</time>
+          </button>
+        </section>
       </div>
       <DocumentEditor
+        v-if="!activeHistory"
         ref="editorRef"
         :title="documentStore.currentDocument.title"
         :content="documentStore.currentDocument.content"
@@ -53,6 +92,15 @@
         @content-change="handleContentChange"
         @cursor-change="sendCursor"
         @submit-version="handleSubmitVersion"
+      />
+      <ChatHistoryViewer
+        v-else
+        :kind="activeHistory.kind"
+        :title="activeHistory.title"
+        :subtitle="activeHistory.subtitle"
+        :selected-id="activeHistory.selectedId"
+        :items="activeHistory.items"
+        @back="closeHistoryView"
       />
       <div class="right-panel">
         <nav class="right-tabs" aria-label="协作工具">
@@ -97,10 +145,12 @@
           :get-selection="getEditorSelection"
           :append-to-document="appendAIResult"
           :replace-document-selection="replaceAISelection"
+          @history-change="loadAssistantHistories"
         />
         <KnowledgeAgentPanel
           v-else
           :scope-document-id="documentId"
+          @history-change="loadAssistantHistories"
         />
       </div>
     </section>
@@ -235,9 +285,16 @@ import ChatPanel from "../components/ChatPanel.vue";
 import AIAssistantPanel from "../components/AIAssistantPanel.vue";
 import KnowledgeAgentPanel from "../components/KnowledgeAgentPanel.vue";
 import DocumentEditor from "../components/DocumentEditor.vue";
+import ChatHistoryViewer from "../components/ChatHistoryViewer.vue";
 import UserList from "../components/UserList.vue";
 import ShareDialog from "../components/ShareDialog.vue";
 import { fetchMessages, getDocument, getSnapshots, restoreSnapshot, saveDocument, updateDocument } from "../api/document";
+import {
+  getAgentRuns,
+  getAIHistory,
+  type AgentRun,
+  type AIHistoryItem
+} from "../api/ai";
 import { CollabSocket } from "../api/websocket";
 import { useDocumentStore, useUserStore } from "../store";
 import type { TextOperation } from "../utils/ot";
@@ -261,12 +318,46 @@ interface MentionNotificationPayload {
   createdAt?: string;
 }
 
+interface ChatMessageItem {
+  id?: number;
+  senderName: string;
+  senderAvatar?: string;
+  message: string;
+  createdAt?: string;
+}
+
+interface HistoryListRecord {
+  id: string;
+  title: string;
+  preview: string;
+  createdAt?: string;
+}
+
+interface HistoryViewerItem {
+  id: string;
+  actor: string;
+  role: "user" | "assistant" | "agent" | "system";
+  label: string;
+  content: string;
+  createdAt?: string;
+}
+
+interface HistorySelection {
+  kind: "user" | "ai";
+  title: string;
+  subtitle: string;
+  selectedId: string;
+  items: HistoryViewerItem[];
+}
+
 const route = useRoute();
 const documentStore = useDocumentStore();
 const userStore = useUserStore();
 const onlineUsers = ref<string[]>([]);
 const remoteCursors = ref<Array<{ userId: number; username: string; cursorPosition: number }>>([]);
-const messages = ref<Array<{ id?: number; senderName: string; senderAvatar?: string; message: string; createdAt?: string }>>([]);
+const messages = ref<ChatMessageItem[]>([]);
+const aiHistory = ref<AIHistoryItem[]>([]);
+const agentRuns = ref<AgentRun[]>([]);
 const socket = new CollabSocket();
 
 const saveStatus = ref<"saved" | "saving" | "unsaved">("saved");
@@ -283,8 +374,79 @@ const unreadMentions = ref(0);
 const activeRightPanel = ref<"chat" | "ai" | "agent">("chat");
 const editorRef = ref<InstanceType<typeof DocumentEditor> | null>(null);
 const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null);
+const activeHistory = ref<HistorySelection | null>(null);
 
 const documentId = Number(route.params.id);
+
+const clip = (value: string, limit = 52) => {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+};
+
+const actionLabel = (action: string) => {
+  if (action === "summary") return "文档总结";
+  if (action === "rewrite") return "选区改写";
+  if (action === "agent_query") return "Agent 问答";
+  return "AI 提问";
+};
+
+const userHistoryRecords = computed<HistoryListRecord[]>(() =>
+  [...messages.value]
+    .filter((message) => message.id !== undefined)
+    .sort((left, right) => {
+      const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+      const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, 12)
+    .map((message) => ({
+      id: `user-${message.id}`,
+      title: message.senderName,
+      preview: clip(message.message),
+      createdAt: message.createdAt
+    }))
+);
+
+const aiConversationRecords = computed(() => {
+  const rows = [...aiHistory.value].sort((left, right) => left.id - right.id);
+  const records: Array<HistoryListRecord & { questionId: number; answer?: AIHistoryItem }> = [];
+
+  rows.forEach((row, index) => {
+    if (row.role !== "user") return;
+    const answer = rows[index + 1]?.role === "assistant"
+      && rows[index + 1]?.action === row.action
+      ? rows[index + 1]
+      : undefined;
+    records.push({
+      id: `ai-${row.id}`,
+      title: actionLabel(row.action),
+      preview: clip(row.content),
+      createdAt: row.createdAt,
+      questionId: row.id,
+      answer
+    });
+  });
+  return records;
+});
+
+const aiAgentHistoryRecords = computed<HistoryListRecord[]>(() => [
+  ...aiConversationRecords.value.map((record) => ({
+    id: record.id,
+    title: record.title,
+    preview: record.preview,
+    createdAt: record.createdAt
+  })),
+  ...agentRuns.value.map((run) => ({
+    id: `agent-${run.runId}`,
+    title: "Agent 任务",
+    preview: clip(run.goal),
+    createdAt: run.updatedAt || run.createdAt
+  }))
+].sort((left, right) => {
+  const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+  const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+  return rightTime - leftTime;
+}).slice(0, 16));
 
 const loadDocument = async () => {
   const { data: docResp } = await getDocument(documentId);
@@ -296,6 +458,16 @@ const loadDocument = async () => {
   } catch {
     messages.value = [];
   }
+  await loadAssistantHistories();
+};
+
+const loadAssistantHistories = async () => {
+  const [aiResult, agentResult] = await Promise.allSettled([
+    getAIHistory(documentId),
+    getAgentRuns(documentId)
+  ]);
+  aiHistory.value = aiResult.status === "fulfilled" ? aiResult.value.data.data || [] : [];
+  agentRuns.value = agentResult.status === "fulfilled" ? agentResult.value.data.data || [] : [];
 };
 
 const focusChatComposer = async () => {
@@ -371,7 +543,7 @@ const connectSocket = () => {
       remoteCursors.value = remoteCursors.value.filter((cursor) => onlineUsers.value.includes(cursor.username));
     },
     onChatMessage: (payload) => {
-      messages.value = [...messages.value, payload as { senderName: string; senderAvatar?: string; message: string; createdAt?: string }];
+      messages.value = [...messages.value, payload as ChatMessageItem];
     },
     onMentionMessage: handleMentionNotification,
     onErrorMessage: (payload) => {
@@ -458,6 +630,109 @@ const sendCursor = (cursorPosition: number) => {
 
 const sendChat = (message: string) => {
   socket.send({ type: "CHAT", documentId, userId: userStore.userId, chatMessage: message });
+};
+
+const openUserHistory = (selectedId: string) => {
+  activeHistory.value = {
+    kind: "user",
+    title: "用户协作聊天",
+    subtitle: "当前文档的用户之间历史消息",
+    selectedId,
+    items: [...messages.value]
+      .sort((left, right) => {
+        const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+        const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        return leftTime - rightTime;
+      })
+      .map((message) => ({
+        id: `user-${message.id ?? message.createdAt ?? message.message}`,
+        actor: message.senderName,
+        role: "user" as const,
+        label: "协作消息",
+        content: message.message,
+        createdAt: message.createdAt
+      }))
+  };
+};
+
+const openAIAgentHistory = (selectedId: string) => {
+  if (selectedId.startsWith("ai-")) {
+    const questionId = Number(selectedId.slice(3));
+    const question = aiHistory.value.find((item) => item.id === questionId);
+    if (!question) return;
+    const answer = aiHistory.value.find(
+      (item) => item.id > question.id && item.role === "assistant" && item.action === question.action
+    );
+    activeHistory.value = {
+      kind: "ai",
+      title: actionLabel(question.action),
+      subtitle: "AI 助手或知识 Agent 的一次问答记录",
+      selectedId,
+      items: [
+        {
+          id: selectedId,
+          actor: "我",
+          role: "user",
+          label: actionLabel(question.action),
+          content: question.content,
+          createdAt: question.createdAt
+        },
+        ...(answer
+          ? [{
+              id: `ai-answer-${answer.id}`,
+              actor: question.action === "agent_query" ? "知识 Agent" : "AI 助手",
+              role: "assistant" as const,
+              label: answer.model || "本地模型",
+              content: answer.content,
+              createdAt: answer.createdAt
+            }]
+          : [])
+      ]
+    };
+    return;
+  }
+
+  const run = agentRuns.value.find((item) => `agent-${item.runId}` === selectedId);
+  if (!run) return;
+  const planSummary = run.plan.length
+    ? run.plan.map((step, index) => `${index + 1}. ${step.tool} - ${step.status}`).join("\n")
+    : "暂无执行计划";
+  activeHistory.value = {
+    kind: "ai",
+    title: "Agent 任务",
+    subtitle: `状态：${run.status} · 模型：${run.model || "本地模型"}`,
+    selectedId,
+    items: [
+      {
+        id: selectedId,
+        actor: "我",
+        role: "user",
+        label: "任务目标",
+        content: run.goal,
+        createdAt: run.createdAt
+      },
+      {
+        id: `agent-plan-${run.runId}`,
+        actor: "Agent",
+        role: "agent",
+        label: "执行计划",
+        content: planSummary,
+        createdAt: run.updatedAt || run.createdAt
+      },
+      {
+        id: `agent-result-${run.runId}`,
+        actor: "Agent",
+        role: "assistant",
+        label: run.error ? "执行失败" : "执行结果",
+        content: run.result || run.error || "暂无输出",
+        createdAt: run.updatedAt || run.createdAt
+      }
+    ]
+  };
+};
+
+const closeHistoryView = () => {
+  activeHistory.value = null;
 };
 
 type SelectionInfo = { text: string; start: number; end: number };
@@ -573,6 +848,16 @@ const formatDate = (dateStr?: string) => {
     second: "2-digit"
   });
 };
+
+const formatShortDate = (dateStr?: string) => {
+  if (!dateStr) return "-";
+  return new Date(dateStr).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
 </script>
 
 <style scoped>
@@ -666,6 +951,74 @@ const formatDate = (dateStr?: string) => {
 .left-rail {
   display: grid;
   gap: 20px;
+}
+.history-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.04);
+}
+.history-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.history-card-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.history-card-header span {
+  min-width: 24px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 7px;
+}
+.history-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.history-record {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 10px 12px;
+  text-align: left;
+}
+.history-record:hover,
+.history-record.active {
+  border-color: var(--accent);
+  background: #eff6ff;
+}
+.history-record strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-record span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-record time {
+  color: var(--muted);
+  font-size: 11px;
 }
 .overlay {
   position: fixed;
