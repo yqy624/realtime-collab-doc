@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.schemas.models import ApiResponse
 from app.services.ai_service import AIAgentRunner, ResultFormatter
-from app.services.agent_graph import KnowledgeAgent
+from app.services.agent_chain import KnowledgeAgent
 from app.services.agent_runtime import AgentRuntime
 from app.services.document_service import DocumentService
 from app.services.rag_service import RAGService

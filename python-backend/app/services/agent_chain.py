@@ -1,6 +1,8 @@
 from typing import Any, TypedDict
 
-from langgraph.graph import END, StateGraph
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnableBranch, RunnableLambda
 
 from app.models.ai_message import AIMessage
 from app.services.ai_service import OllamaLLMClient
@@ -22,13 +24,29 @@ class AgentState(TypedDict, total=False):
 
 
 class KnowledgeAgent:
-    """LangGraph-orchestrated RAG agent for grounded document Q&A."""
+    """LangChain LCEL RAG chain for grounded document Q&A."""
+
+    _ANSWER_PROMPT = PromptTemplate.from_template(
+        """You are a grounded knowledge-base agent in a collaborative document system.
+Answer only from the supplied reference material.
+If the references are insufficient, say that the references are insufficient and do not invent facts.
+Answer in Chinese, keep the structure clear, and add [Reference N] after important conclusions.
+
+User question:
+{question}
+
+Reference material:
+{context}
+
+Give the answer directly."""
+    )
 
     def __init__(self, db):
         self.db = db
         self.rag = RAGService(db)
         self.llm = OllamaLLMClient()
-        self.graph = self._build_graph()
+        self.output_parser = StrOutputParser()
+        self.chain = self._build_chain()
 
     def run(
         self,
@@ -39,7 +57,8 @@ class KnowledgeAgent:
     ) -> dict:
         if not question.strip():
             raise ValueError("问题不能为空")
-        state = self.graph.invoke(
+
+        state = self.chain.invoke(
             {
                 "question": question.strip(),
                 "user_id": user_id,
@@ -55,6 +74,7 @@ class KnowledgeAgent:
             "model": state.get("model", self.llm.model),
             "elapsedMs": state.get("elapsed_ms", 0),
             "trace": {
+                "orchestration": "langchain_lcel",
                 "workflow": [
                     "retrieve_chunks",
                     "route_evidence",
@@ -110,70 +130,78 @@ class KnowledgeAgent:
         )
         self.db.commit()
 
-    def _build_graph(self):
-        graph = StateGraph(AgentState)
-        graph.add_node("retrieve_chunks", self._retrieve_chunks)
-        graph.add_node("route_evidence", self._route_evidence)
-        graph.add_node("build_context", self._build_context)
-        graph.add_node("generate_answer", self._generate_answer)
-        graph.add_node("format_citations", self._format_citations)
-        graph.set_entry_point("retrieve_chunks")
-        graph.add_edge("retrieve_chunks", "route_evidence")
-        graph.add_conditional_edges(
-            "route_evidence",
-            self._route_after_evidence,
-            {"grounded": "build_context", "refuse": "format_citations"},
+    def _build_chain(self):
+        retrieve = RunnableLambda(self._retrieve_chunks)
+        route = RunnableLambda(self._route_evidence)
+        grounded = (
+            RunnableLambda(self._build_context)
+            | RunnableLambda(self._generate_answer)
+            | RunnableLambda(self._format_citations)
         )
-        graph.add_edge("build_context", "generate_answer")
-        graph.add_edge("generate_answer", "format_citations")
-        graph.add_edge("format_citations", END)
-        return graph.compile()
+        refusal = RunnableLambda(self._format_citations)
 
-    def _retrieve_chunks(self, state: AgentState) -> dict[str, Any]:
+        return retrieve | route | RunnableBranch(
+            (self._has_evidence, grounded),
+            refusal,
+        )
+
+    @staticmethod
+    def _has_evidence(state: AgentState) -> bool:
+        return bool(state.get("hits"))
+
+    def _retrieve_chunks(self, state: AgentState) -> AgentState:
         hits = self.rag.search(
             state["question"],
             state["user_id"],
             document_id=state.get("document_id"),
             top_k=state.get("top_k", 6),
         )
-        return {"hits": hits}
+        return {**state, "hits": hits}
 
     @staticmethod
-    def _route_evidence(state: AgentState) -> dict[str, Any]:
-        return {"refusal": not bool(state.get("hits"))}
+    def _route_evidence(state: AgentState) -> AgentState:
+        return {**state, "refusal": not bool(state.get("hits"))}
 
     @staticmethod
     def _route_after_evidence(state: AgentState) -> str:
         return "grounded" if state.get("hits") else "refuse"
 
     @staticmethod
-    def _build_context(state: AgentState) -> dict[str, Any]:
+    def _build_context(state: AgentState) -> AgentState:
         blocks = []
         for index, hit in enumerate(state.get("hits", []), start=1):
             blocks.append(
-                f"[参考资料 {index}] 文档：{hit.title}（文档ID {hit.document_id}，片段 {hit.chunk_index + 1}）\n"
+                f"[Reference {index}] Document: {hit.title} "
+                f"(document ID {hit.document_id}, chunk {hit.chunk_index + 1})\n"
                 f"{hit.content}"
             )
-        return {"context": "\n\n".join(blocks)}
+        return {**state, "context": "\n\n".join(blocks)}
 
-    def _generate_answer(self, state: AgentState) -> dict[str, Any]:
-        prompt = (
-            "你是协作文档系统中的知识库 Agent。只能依据参考资料回答问题。"
-            "如果参考资料不足以支持结论，要明确说资料不足，不要补充外部事实。"
-            "使用中文，回答结构清晰，并在关键结论后使用 [参考资料 N] 标注依据。\n\n"
-            f"用户问题：{state['question']}\n\n"
-            f"参考资料：\n{state.get('context', '')}\n\n"
-            "请直接给出答案。"
-        )
-        answer, elapsed_ms = self.llm.generate(prompt)
+    def _invoke_answer_model(self, prompt_value) -> dict[str, Any]:
+        raw, elapsed_ms = self.llm.generate(prompt_value.to_string())
         return {
-            "answer": answer or "参考资料不足，无法形成可靠回答。",
+            "answer": self.output_parser.invoke(raw or ""),
             "elapsed_ms": elapsed_ms,
             "model": self.llm.model,
         }
 
+    def _generate_answer(self, state: AgentState) -> AgentState:
+        answer_chain = self._ANSWER_PROMPT | RunnableLambda(self._invoke_answer_model)
+        result = answer_chain.invoke(
+            {
+                "question": state["question"],
+                "context": state.get("context", ""),
+            }
+        )
+        return {
+            **state,
+            "answer": result["answer"] or "参考资料不足，无法形成可靠回答。",
+            "elapsed_ms": result["elapsed_ms"],
+            "model": result["model"],
+        }
+
     @staticmethod
-    def _format_citations(state: AgentState) -> dict[str, Any]:
+    def _format_citations(state: AgentState) -> AgentState:
         citations = [
             {
                 "documentId": hit.document_id,
@@ -187,9 +215,10 @@ class KnowledgeAgent:
         ]
         if state.get("refusal"):
             return {
-                "answer": "当前可访问文档中没有检索到足够依据，暂时无法可靠回答。请换一个关键词，或先把相关内容加入可访问文档。",
+                **state,
+                "answer": "当前可访问文档中没有检索到足够依据，暂时无法可靠回答。请更换关键词，或先把相关内容加入可访问文档。",
                 "citations": [],
                 "elapsed_ms": 0,
                 "model": "lexical-rag",
             }
-        return {"citations": citations}
+        return {**state, "citations": citations}

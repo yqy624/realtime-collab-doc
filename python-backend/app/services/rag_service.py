@@ -40,7 +40,7 @@ class RAGService:
     """Small, dependency-light lexical retriever for the document knowledge base.
 
     The service deliberately keeps indexing local and deterministic. It can later
-    be upgraded to hybrid embeddings without changing the API or Agent graph.
+    be upgraded to hybrid embeddings without changing the API or Agent chain.
     """
 
     def __init__(self, db):
