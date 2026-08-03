@@ -19,7 +19,7 @@ The knowledge base is implemented as a local, deterministic RAG pipeline:
 1. Documents are split into paragraph-aware chunks and stored in `document_chunks`.
 2. Search filters documents by owner, public visibility, or explicit sharing permission.
 3. The lexical retriever returns ranked chunks with document title, chunk index, score, and matched terms.
-4. The LangGraph Agent runs `retrieve_chunks -> route_evidence -> build_context -> generate_answer -> format_citations`.
+4. The LangChain Agent runs an LCEL pipeline: `retrieve_chunks -> route_evidence -> build_context -> generate_answer -> format_citations`.
 5. If no evidence is retrieved, the Agent refuses to answer without calling Ollama.
 
 API examples:
@@ -30,12 +30,12 @@ POST /api/ai/agent/query
      {"question":"Which documents mention collaboration risks?","topK":6}
 ```
 
-The first version uses lexical retrieval so it can run without a GPU or embedding model. The retriever can later be extended with embeddings and hybrid ranking without changing the frontend contract or Agent graph.
+The first version uses lexical retrieval so it can run without a GPU or embedding model. The retriever can later be extended with embeddings and hybrid ranking without changing the frontend contract or Agent chain.
 
 ## Tech Stack
 
 - Backend: Python 3.11+ / FastAPI / SQLAlchemy 2 / WebSocket / python-jose / bcrypt
-- Agent: LangGraph StateGraph / local lexical retrieval / Ollama
+- Agent: LangChain Core LCEL / PromptTemplate / RunnableBranch / local lexical retrieval / Ollama
 - Frontend: Vue 3 / TypeScript / Vite / Pinia / Element Plus
 - Database: MySQL 8
 - Deployment: Docker Compose + Nginx
@@ -67,11 +67,15 @@ collab-doc-project/
 ```bash
 cd python-backend
 pip install -r requirements.txt
-export DATABASE_URL="mysql+pymysql://root:your-password@127.0.0.1:3306/collab_doc"
+export DATABASE_URL="mysql+pymysql://root:***@127.0.0.1:3306/collab_doc"
 python run.py
 ```
 
 后端运行在 `http://127.0.0.1:8082`，API 前缀为 `/api`。
+Agent 的实时查询开箱即用：天气走 Open-Meteo（免费、无需 key），
+网页/新闻搜索默认走 Bing（免费、无需 key）。可选配置
+`TAVILY_API_KEY`（并设置 `WEB_SEARCH_PROVIDER=tavily`）可切换到
+Tavily 搜索；未配置 key 时自动降级回 Bing，不会编造实时新闻。
 
 ### Frontend
 
@@ -88,6 +92,7 @@ npm run dev
 ```bash
 export MYSQL_ROOT_PASSWORD="your-mysql-password"
 export APP_JWT_SECRET="replace-with-a-long-random-secret"
+export TAVILY_API_KEY="tvly-..."
 ./run.sh
 ```
 
@@ -100,7 +105,11 @@ docker compose up -d --build
 Docker deployment requires `APP_JWT_SECRET`; the backend refuses to start in
 production when the development JWT secret is used. Compose also starts Ollama
 and pulls `OLLAMA_MODEL` (default: `granite4.1:8b`) into the persistent
-`ollama-data` volume.
+`ollama-data` volume. Agent live web/news search works out of the box:
+weather uses Open-Meteo and web/news search defaults to Bing, both free
+and key-less. Optionally set `TAVILY_API_KEY` (and
+`WEB_SEARCH_PROVIDER=tavily`) to switch to Tavily; without the key the
+Agent falls back to Bing instead of inventing current news.
 
 端口映射（可通过环境变量覆盖）：
 
