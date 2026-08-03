@@ -61,6 +61,9 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-granite4.1:8b}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-tavily}
+      WEB_SEARCH_TIMEOUT: ${WEB_SEARCH_TIMEOUT:-30}
     ports:
       - "${BACKEND_HOST_PORT:-8082}:8082"
 
