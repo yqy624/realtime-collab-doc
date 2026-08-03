@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app.models.database import Base
 from app.models.document import Document
 from app.models.user import User
-from app.services.agent_runtime import AgentRuntime
+from app.services.agent_runtime import AgentPlanner, AgentRuntime, AgentToolRegistry
 
 
 class FakeLLM:
@@ -78,6 +78,18 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(result["trace"])
         self.assertTrue(result["memories"])
 
+    def test_live_news_plan_includes_web_search_and_write_review(self):
+        plan = AgentPlanner(FakeLLM()).plan(
+            "查询今天的实时新闻并写入文档",
+            self.document.id,
+        )
+
+        tools = [step["tool"] for step in plan]
+        self.assertIn("web_search", tools)
+        self.assertLess(tools.index("web_search"), tools.index("model_generate"))
+        self.assertIn("generate_diff", tools)
+        self.assertIn("apply_document_content", tools)
+
     def test_write_plan_waits_for_approval_then_executes(self):
         runtime = AgentRuntime(self.db, llm=FakeLLM())
         pending = runtime.start(
@@ -94,6 +106,15 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(self.document.content, "更新后的文档内容")
         self.assertGreater(self.document.revision, 0)
+
+    def test_tool_specs_include_web_search(self):
+        specs = AgentToolRegistry.specs()
+        names = {item["name"] for item in specs}
+
+        self.assertIn("web_search", names)
+        web_search = next(item for item in specs if item["name"] == "web_search")
+        self.assertTrue(web_search["readOnly"])
+        self.assertFalse(web_search["requiresApproval"])
 
 
 if __name__ == "__main__":

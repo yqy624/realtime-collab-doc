@@ -12,11 +12,18 @@ from app.models.document_snapshot import DocumentSnapshot
 from app.services.ai_service import OllamaLLMClient
 from app.services.document_service import DocumentService
 from app.services.rag_service import RAGService
+from app.services.web_search_service import WebSearchService
+from app.services.weather_service import WeatherService
 
 
 MAX_PLAN_STEPS = 12
 MAX_MEMORY_RESULTS = 5
 MAX_OUTPUT_CHARS = 16000
+LIVE_SEARCH_RE = re.compile(
+    r"(today|latest|current|real[- ]?time|news|breaking|headline|weather|temperature|forecast|"
+    r"今天|今日|实时|最新|新闻|资讯|热点|天气|气温|温度|降雨|降雪|天气预报)",
+    re.IGNORECASE,
+)
 
 
 class MemoryService:
@@ -106,6 +113,8 @@ class AgentToolRegistry:
         self.rag = RAGService(db)
         self.documents = DocumentService(db)
         self.memories = MemoryService(db)
+        self.web_search = WebSearchService()
+        self.weather = WeatherService()
 
     @staticmethod
     def specs() -> list[dict]:
@@ -123,6 +132,26 @@ class AgentToolRegistry:
                 "readOnly": True,
                 "requiresApproval": False,
                 "inputSchema": {"query": "string", "topK": "integer"},
+            },
+            {
+                "name": "web_search",
+                "description": "Search live web/news sources for current information.",
+                "readOnly": True,
+                "requiresApproval": False,
+                "inputSchema": {
+                    "query": "string",
+                    "maxResults": "integer",
+                    "topic": "string",
+                    "dateScope": "string",
+                    "country": "string",
+                },
+            },
+            {
+                "name": "weather_query",
+                "description": "Query current weather and temperature for a city (conditions, highs, lows). Use for weather, temperature, rain, snow, or forecast requests.",
+                "readOnly": True,
+                "requiresApproval": False,
+                "inputSchema": {"city": "string", "days": "integer"},
             },
             {
                 "name": "get_current_document",
@@ -182,6 +211,8 @@ class AgentToolRegistry:
         handlers = {
             "recall_memory": self._recall_memory,
             "search_knowledge": self._search_knowledge,
+            "web_search": self._web_search,
+            "weather_query": self._weather_query,
             "get_current_document": self._get_current_document,
             "list_snapshots": self._list_snapshots,
             "generate_diff": self._generate_diff,
@@ -206,6 +237,24 @@ class AgentToolRegistry:
             document_id=self.document_id,
             top_k=top_k,
         )
+
+    def _web_search(self, args: dict) -> dict:
+        query = str(args.get("query") or "")
+        if not query.strip():
+            return {"results": []}
+        return self.web_search.search(
+            query,
+            max_results=max(1, min(int(args.get("maxResults") or 5), 10)),
+            topic=str(args.get("topic") or "general"),
+            date_scope=str(args.get("dateScope") or ""),
+            country=str(args.get("country") or ""),
+        )
+
+    def _weather_query(self, args: dict) -> dict:
+        city = str(args.get("city") or "")
+        if not city.strip():
+            return {"error": "city is required"}
+        return self.weather.search(city, days=max(1, min(int(args.get("days") or 1), 7)))
 
     def _get_current_document(self, args: dict) -> dict:
         document_id = int(args.get("documentId") or self.document_id or 0)
@@ -311,6 +360,8 @@ class AgentPlanner:
         tools = [
             "recall_memory",
             "search_knowledge",
+            "web_search",
+            "weather_query",
             "get_current_document",
             "list_snapshots",
             "generate_diff",
@@ -324,6 +375,10 @@ class AgentPlanner:
             "Allowed tool names: "
             f"{', '.join(tools)}. "
             "A model step must use tool name model_generate. "
+            "Use web_search for current, latest, real-time, or news requests. "
+            "Use weather_query (args: city) for weather, temperature, rain, snow, or forecast requests; "
+            "never use web_search for weather. The city argument MUST be the exact Chinese name "
+            "from the user's request (e.g. 鹤岗, 上海) — never pinyin, never a translated name. "
             "Write operations must be included only when the user clearly asks to modify the document. "
             'Schema: {"steps":[{"id":"string","tool":"string","args":{},"reason":"string"}]}. '
             f"Current document id: {document_id}. User goal: {goal}"
@@ -350,12 +405,19 @@ class AgentPlanner:
             tool = str(step.get("tool") or "")
             if tool != "model_generate" and tool not in allowed:
                 continue
+            args = step.get("args") if isinstance(step.get("args"), dict) else {}
+            if tool == "weather_query":
+                # Granite-class models frequently mangle the city argument (pinyin
+                # typos, random strings). Always derive the city from the user's
+                # original goal instead of trusting the model's parameter.
+                args = dict(args)
+                args["city"] = self._weather_city(goal)
             normalized.append(
                 {
                     "id": str(step.get("id") or f"step-{index + 1}"),
                     "kind": "model" if tool == "model_generate" else "tool",
                     "tool": tool,
-                    "args": step.get("args") if isinstance(step.get("args"), dict) else {},
+                    "args": args,
                     "reason": str(step.get("reason") or ""),
                     "status": "pending",
                 }
@@ -372,9 +434,22 @@ class AgentPlanner:
                     "status": "pending",
                 },
             )
-        if not any(step["tool"] == "search_knowledge" for step in normalized):
+        needs_web_search = self._needs_web_search(goal) and not self._needs_weather(goal)
+        if needs_web_search and not any(step["tool"] == "web_search" for step in normalized):
             normalized.insert(
                 1,
+                {
+                    "id": "web-search",
+                    "kind": "tool",
+                    "tool": "web_search",
+                    "args": self._web_search_args(goal),
+                    "reason": "Fetch current web/news evidence.",
+                    "status": "pending",
+                },
+            )
+        if not any(step["tool"] == "search_knowledge" for step in normalized):
+            normalized.insert(
+                2 if needs_web_search else 1,
                 {
                     "id": "search-knowledge",
                     "kind": "tool",
@@ -406,6 +481,10 @@ class AgentPlanner:
                     "status": "pending",
                 }
             )
+        if self._needs_weather(goal) and any(step["tool"] == "weather_query" for step in normalized):
+            # Weather requests get their data from weather_query; a web_search
+            # step would only surface irrelevant hits and slow the run down.
+            normalized = [step for step in normalized if step["tool"] != "web_search"]
         if self._looks_like_edit(goal) and document_id is not None:
             # Rebuild the mutation tail so a model-provided plan cannot apply
             # content before the user-visible diff has been generated.
@@ -477,6 +556,28 @@ class AgentPlanner:
                     "status": "pending",
                 }
             )
+        if self._needs_weather(goal):
+            steps.append(
+                {
+                    "id": "weather-query",
+                    "kind": "tool",
+                    "tool": "weather_query",
+                    "args": {"city": self._weather_city(goal), "days": 1},
+                    "reason": "Fetch current weather for the requested city.",
+                    "status": "pending",
+                }
+            )
+        elif self._needs_web_search(goal):
+            steps.append(
+                {
+                    "id": "web-search",
+                    "kind": "tool",
+                    "tool": "web_search",
+                    "args": self._web_search_args(goal),
+                    "reason": "Fetch current web/news evidence.",
+                    "status": "pending",
+                }
+            )
         steps.extend(
             [
                 {
@@ -531,10 +632,47 @@ class AgentPlanner:
         return steps[:MAX_PLAN_STEPS]
 
     @staticmethod
+    def _needs_web_search(goal: str) -> bool:
+        return bool(LIVE_SEARCH_RE.search(goal or ""))
+
+    @staticmethod
+    def _needs_weather(goal: str) -> bool:
+        return bool(
+            re.search(
+                r"(天气|气温|温度|降雨|降雪|天气预报|weather|temperature|forecast|rain|snow|多少度)",
+                goal or "",
+                re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _weather_city(goal: str) -> str:
+        text = re.sub(
+            r"(查询|查一下|查查|帮我|请|麻烦|今天|明天|明日|后天|天气|气温|温度|降雨|降雪|预报|怎么样|如何|"
+            r"多少|几度|写入|写到|写回|文档|内容|并|把|到|中|里|给|文件|"
+            r"weather|temperature|forecast|today|tomorrow|now|the|in|for|of|的|呢|是|和|与)",
+            " ",
+            goal or "",
+            flags=re.IGNORECASE,
+        )
+        return text.strip() or "北京"
+
+    @staticmethod
+    def _web_search_args(goal: str) -> dict:
+        date_scope = "today" if re.search(r"(today|今天|今日)", goal or "", re.IGNORECASE) else ""
+        topic = "news" if re.search(r"(news|breaking|headline|新闻|资讯|热点)", goal or "", re.IGNORECASE) else "general"
+        return {
+            "query": goal,
+            "maxResults": 5,
+            "topic": topic,
+            "dateScope": date_scope,
+        }
+
+    @staticmethod
     def _looks_like_edit(goal: str) -> bool:
         return bool(
             re.search(
-                r"(修改|改写|重写|润色|补充|更新|替换|删除|rewrite|edit|update|polish)",
+                r"(修改|改写|重写|润色|补充|更新|替换|删除|写入|写到|写回|插入|追加|保存|rewrite|edit|update|polish|write)",
                 goal,
                 re.IGNORECASE,
             )
@@ -684,6 +822,7 @@ class AgentRuntime:
             "You are the execution model inside a permission-aware document Agent. "
             "Use only the supplied tool outputs. Do not invent document facts. "
             f"Return valid JSON with schema {output_schema}. "
+            "When web_search results are present, cite each important news item with title, source URL, and publishedDate if available. "
             "If evidence is insufficient, say so in answer. "
             f"User goal: {run.goal}\nTool outputs:\n{evidence}"
         )
@@ -699,9 +838,65 @@ class AgentRuntime:
             )
             if proposed:
                 parsed["proposedContent"] = proposed
+            else:
+                # Granite-class models often omit proposedContent despite the schema.
+                # Fall back to building the write payload from real tool outputs so
+                # the document write is never a no-op / empty overwrite.
+                parsed["proposedContent"] = self._auto_proposed_content(context, run.goal)
         parsed["elapsedMs"] = elapsed_ms
         parsed["model"] = self.llm.model
         return parsed
+
+    @staticmethod
+    def _auto_proposed_content(context: dict[str, Any], goal: str) -> str:
+        """Build document content from tool outputs when the model omits proposedContent."""
+        parts: list[str] = []
+        weather = context.get("weather_query") or {}
+        if weather.get("city"):
+            current = weather.get("current") or {}
+            daily = weather.get("daily") or []
+            lines = [f"【{weather.get('city')}{(' · ' + weather['region']) if weather.get('region') else ''}天气】"]
+            if current.get("time"):
+                lines.append(f"更新时间: {current['time']}")
+            if current.get("condition"):
+                lines.append(
+                    f"当前天气: {current['condition']}"
+                    + (f", 气温 {current['temperatureC']}°C" if current.get("temperatureC") is not None else "")
+                    + (f", 体感 {current['apparentTemperatureC']}°C" if current.get("apparentTemperatureC") is not None else "")
+                )
+            if daily:
+                first = daily[0]
+                lines.append(
+                    f"今日预报: {first.get('condition') or '未知'}, "
+                    f"最高 {first.get('maxTempC')}°C / 最低 {first.get('minTempC')}°C"
+                )
+                for day in daily[1:]:
+                    lines.append(
+                        f"{day.get('date')}: {day.get('condition') or '未知'}, "
+                        f"{day.get('minTempC')}°C ~ {day.get('maxTempC')}°C"
+                    )
+            parts.append("\n".join(lines))
+
+        search = context.get("web_search") or {}
+        results = search.get("results") or []
+        # Only attach search results when there is no structured weather data;
+        # mixing unrelated search hits into a weather write pollutes the document.
+        if not weather.get("city") and results:
+            lines = ["【联网搜索结果】"]
+            for i, item in enumerate(results[:5], 1):
+                title = item.get("title") or ""
+                url = item.get("url") or ""
+                content = (item.get("content") or "")[:120]
+                lines.append(f"{i}. {title}{(' - ' + url) if url else ''}")
+                if content:
+                    lines.append(f"   {content}")
+            parts.append("\n".join(lines))
+
+        if parts:
+            return "\n\n".join(parts)
+        # Last resort: the model's own answer is the only content we have.
+        answer = str((context.get("model") or {}).get("answer") or "") or goal
+        return answer.strip()[:MAX_OUTPUT_CHARS]
 
     def _get_run(self, run_id: int, user_id: int) -> AgentRun:
         run = (

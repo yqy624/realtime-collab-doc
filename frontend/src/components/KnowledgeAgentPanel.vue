@@ -179,6 +179,8 @@ const toolLabel = (tool: string) => {
   const labels: Record<string, string> = {
     recall_memory: "召回记忆",
     search_knowledge: "检索知识库",
+    web_search: "联网搜索",
+    weather_query: "天气查询",
     get_current_document: "读取当前文档",
     list_snapshots: "读取历史版本",
     model_generate: "模型生成",

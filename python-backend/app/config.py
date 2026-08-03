@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://127.0.0.1:3000,http://localhost:3000"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "granite4.1:8b"
+    tavily_api_key: str = ""
+    web_search_provider: str = "bing"  # "bing" (free, no key) or "tavily" (falls back to bing without key)
+    web_search_timeout: int = 30
     app_env: str = "development"
 
 
