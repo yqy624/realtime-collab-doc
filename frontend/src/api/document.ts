@@ -16,17 +16,25 @@ documentApi.interceptors.request.use((config) => {
 
 export interface DocumentPayload {
   id?: number;
-  title: string;
+  title?: string;
   content?: string;
   isPublic?: boolean;
+  workspaceId?: number | null;
+  folderId?: number | null;
+  contentFormat?: string;
   revision?: number;
 }
 
-export const listDocuments = () => documentApi.get("");
+export const listDocuments = (params: { workspaceId?: number; folderId?: number | null } = {}) =>
+  documentApi.get("", { params });
+export const listTrashDocuments = () => documentApi.get("/trash");
 export const getDocument = (id: number) => documentApi.get(`/${id}`);
 export const createDocument = (payload: DocumentPayload) => documentApi.post("", payload);
 export const updateDocument = (id: number, payload: DocumentPayload) => documentApi.put(`/${id}`, payload);
-export const deleteDocument = (id: number) => documentApi.delete(`/${id}`);
+export const persistDocument = (id: number, payload?: DocumentPayload) => documentApi.post(`/${id}/persist`, payload ?? {});
+export const deleteDocument = (id: number, options: { permanent?: boolean; reason?: string } = {}) =>
+  documentApi.delete(`/${id}`, { params: options });
+export const restoreDeletedDocument = (id: number) => documentApi.post(`/${id}/restore`);
 export const fetchMessages = (id: number) => documentApi.get(`/${id}/messages`);
 export const saveDocument = (id: number, payload?: DocumentPayload) => documentApi.post(`/${id}/save`, payload ?? {});
 export const getSnapshots = (id: number) => documentApi.get(`/${id}/snapshots`);

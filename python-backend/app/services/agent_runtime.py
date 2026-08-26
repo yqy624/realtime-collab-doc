@@ -9,6 +9,8 @@ from app.models.agent_memory import AgentMemory
 from app.models.agent_run import AgentRun
 from app.models.document import Document
 from app.models.document_snapshot import DocumentSnapshot
+from app.services.agent_platform_service import AgentPlatformService, BUILTIN_TOOL_SPECS
+from app.services.audit_service import AuditService
 from app.services.ai_service import OllamaLLMClient
 from app.services.document_service import DocumentService
 from app.services.rag_service import RAGService
@@ -106,10 +108,11 @@ class MemoryService:
 class AgentToolRegistry:
     """Permission-aware tools exposed to the planner and executor."""
 
-    def __init__(self, db, user_id: int, document_id: int | None):
+    def __init__(self, db, user_id: int, document_id: int | None, workspace_id: int | None = None):
         self.db = db
         self.user_id = user_id
         self.document_id = document_id
+        self.workspace_id = workspace_id
         self.rag = RAGService(db)
         self.documents = DocumentService(db)
         self.memories = MemoryService(db)
@@ -117,90 +120,25 @@ class AgentToolRegistry:
         self.weather = WeatherService()
 
     @staticmethod
-    def specs() -> list[dict]:
-        return [
-            {
-                "name": "recall_memory",
-                "description": "Recall user-scoped memories relevant to the current task.",
-                "readOnly": True,
-                "requiresApproval": False,
-                "inputSchema": {"query": "string"},
-            },
-            {
-                "name": "search_knowledge",
-                "description": "Search accessible document chunks with permission filtering.",
-                "readOnly": True,
-                "requiresApproval": False,
-                "inputSchema": {"query": "string", "topK": "integer"},
-            },
-            {
-                "name": "web_search",
-                "description": "Search live web/news sources for current information.",
-                "readOnly": True,
-                "requiresApproval": False,
-                "inputSchema": {
-                    "query": "string",
-                    "maxResults": "integer",
-                    "topic": "string",
-                    "dateScope": "string",
-                    "country": "string",
-                },
-            },
-            {
-                "name": "weather_query",
-                "description": "Query current weather and temperature for a city (conditions, highs, lows). Use for weather, temperature, rain, snow, or forecast requests.",
-                "readOnly": True,
-                "requiresApproval": False,
-                "inputSchema": {"city": "string", "days": "integer"},
-            },
-            {
-                "name": "get_current_document",
-                "description": "Read the current accessible document and its revision.",
-                "readOnly": True,
-                "requiresApproval": False,
-                "inputSchema": {"documentId": "integer"},
-            },
-            {
-                "name": "list_snapshots",
-                "description": "List historical versions of the current document.",
-                "readOnly": True,
-                "requiresApproval": False,
-                "inputSchema": {"documentId": "integer"},
-            },
-            {
-                "name": "generate_diff",
-                "description": "Compare a proposed document body with the current revision.",
-                "readOnly": True,
-                "requiresApproval": False,
-                "inputSchema": {"documentId": "integer", "proposedContent": "string"},
-            },
-            {
-                "name": "remember",
-                "description": "Persist a user-scoped working memory for future Agent runs.",
-                "readOnly": False,
-                "requiresApproval": False,
-                "inputSchema": {"content": "string", "memoryType": "string", "importance": "integer"},
-            },
-            {
-                "name": "create_snapshot",
-                "description": "Create a version snapshot before a document mutation.",
-                "readOnly": False,
-                "requiresApproval": True,
-                "inputSchema": {"documentId": "integer"},
-            },
-            {
-                "name": "apply_document_content",
-                "description": "Apply proposed content to the document after user approval.",
-                "readOnly": False,
-                "requiresApproval": True,
-                "inputSchema": {"documentId": "integer", "content": "string"},
-            },
-        ]
+    def default_specs() -> list[dict]:
+        return BUILTIN_TOOL_SPECS
+
+    def specs(self) -> list[dict]:
+        try:
+            return AgentPlatformService(self.db).list_tool_specs(self.user_id, self.workspace_id)
+        except Exception:
+            return self.default_specs()
 
     def execute(self, name: str, args: dict[str, Any], approved: bool = False) -> dict:
         spec = next((item for item in self.specs() if item["name"] == name), None)
         if not spec:
             raise ValueError(f"Unknown Agent tool: {name}")
+        if spec.get("toolType") == "mcp":
+            return {
+                "requiresApproval": bool(spec.get("requiresApproval", True)) and not approved,
+                "tool": name,
+                "message": "MCP tool execution is registered but the live connector is not enabled yet.",
+            }
         if spec["requiresApproval"] and not approved:
             return {
                 "requiresApproval": True,
@@ -335,15 +273,22 @@ class AgentToolRegistry:
     def _assert_write_permission(self, document_id: int) -> None:
         document = self.documents.find_accessible(document_id, self.user_id)
         permission = self.documents._get_user_permission(document, self.user_id)
-        if permission not in ("owner", "edit"):
+        if permission not in ("owner", "manage", "edit"):
             raise ValueError("Agent write tools require owner or edit permission")
 
 
 class AgentPlanner:
     """Model-assisted planner with a deterministic fallback for local development."""
 
-    def __init__(self, llm: OllamaLLMClient):
+    def __init__(
+        self,
+        llm: OllamaLLMClient,
+        tool_specs: list[dict] | None = None,
+        skill_prompt: str = "",
+    ):
         self.llm = llm
+        self.tool_specs = tool_specs or AgentToolRegistry.default_specs()
+        self.skill_prompt = skill_prompt
 
     def plan(self, goal: str, document_id: int | None) -> list[dict]:
         try:
@@ -357,18 +302,7 @@ class AgentPlanner:
         return self._fallback(goal, document_id)
 
     def _planning_prompt(self, goal: str, document_id: int | None) -> str:
-        tools = [
-            "recall_memory",
-            "search_knowledge",
-            "web_search",
-            "weather_query",
-            "get_current_document",
-            "list_snapshots",
-            "generate_diff",
-            "remember",
-            "create_snapshot",
-            "apply_document_content",
-        ]
+        tools = [item["name"] for item in self.tool_specs]
         return (
             "You are an Agent planner. Return JSON only. "
             "Create a short executable plan for the user's goal. "
@@ -381,6 +315,7 @@ class AgentPlanner:
             "from the user's request (e.g. 鹤岗, 上海) — never pinyin, never a translated name. "
             "Write operations must be included only when the user clearly asks to modify the document. "
             'Schema: {"steps":[{"id":"string","tool":"string","args":{},"reason":"string"}]}. '
+            f"Skill instruction: {self.skill_prompt or 'Use the best matching general skill.'} "
             f"Current document id: {document_id}. User goal: {goal}"
         )
 
@@ -399,7 +334,7 @@ class AgentPlanner:
         return [step for step in steps if isinstance(step, dict)][:MAX_PLAN_STEPS]
 
     def _normalize(self, steps: list[dict], goal: str, document_id: int | None) -> list[dict]:
-        allowed = {item["name"] for item in AgentToolRegistry.specs()}
+        allowed = {item["name"] for item in self.tool_specs}
         normalized = []
         for index, step in enumerate(steps):
             tool = str(step.get("tool") or "")
@@ -687,19 +622,40 @@ class AgentRuntime:
         self.llm = llm or OllamaLLMClient()
         self.memory = MemoryService(db)
 
-    def start(self, goal: str, user_id: int, document_id: int | None = None) -> dict:
+    def start(
+        self,
+        goal: str,
+        user_id: int,
+        document_id: int | None = None,
+        skill_id: int | None = None,
+        execution_mode: str = "inline",
+    ) -> dict:
         normalized_goal = goal.strip()
         if not normalized_goal:
             raise ValueError("Agent goal cannot be empty")
+        workspace_id = None
         if document_id is not None:
-            DocumentService(self.db).find_accessible(document_id, user_id)
+            document = DocumentService(self.db).find_accessible(document_id, user_id)
+            workspace_id = document.workspace_id
 
-        plan = AgentPlanner(self.llm).plan(normalized_goal, document_id)
+        skill, skill_version = AgentPlatformService(self.db).get_skill(skill_id, user_id)
+        tool_specs = AgentPlatformService(self.db).list_tool_specs(user_id, workspace_id)
+        if skill_version:
+            allowed_tools = set(self._load_json(skill_version.tool_dependencies_json, []))
+            tool_specs = [item for item in tool_specs if item["name"] in allowed_tools]
+        plan = AgentPlanner(
+            self.llm,
+            tool_specs=tool_specs,
+            skill_prompt=skill_version.prompt if skill_version else "",
+        ).plan(normalized_goal, document_id)
         run = AgentRun(
             user_id=user_id,
             document_id=document_id,
+            workspace_id=workspace_id,
+            skill_id=skill.id if skill else None,
+            execution_mode=execution_mode[:30] if execution_mode else "inline",
             goal=normalized_goal,
-            status="executing",
+            status="queued",
             plan_json=json.dumps(plan, ensure_ascii=False),
             trace_json="[]",
             memory_json="[]",
@@ -707,6 +663,21 @@ class AgentRuntime:
             model=self.llm.model,
         )
         self.db.add(run)
+        self.db.flush()
+        AuditService(self.db).record(
+            user_id,
+            "agent.run.create",
+            "agent_run",
+            target_id=run.id,
+            workspace_id=workspace_id,
+            document_id=document_id,
+            after={
+                "goal": normalized_goal,
+                "skillId": run.skill_id,
+                "executionMode": run.execution_mode,
+                "status": run.status,
+            },
+        )
         self.db.commit()
         self.db.refresh(run)
         return self._execute(run)
@@ -727,7 +698,7 @@ class AgentRuntime:
             return self.to_dict(run)
         waiting["approved"] = True
         waiting["status"] = "pending"
-        run.status = "executing"
+        run.status = "running"
         self._save_run(run, plan, self._load_json(run.trace_json, []))
         return self._execute(run)
 
@@ -749,12 +720,14 @@ class AgentRuntime:
 
     @staticmethod
     def tool_specs() -> list[dict]:
-        return AgentToolRegistry.specs()
+        return AgentToolRegistry.default_specs()
 
     def _execute(self, run: AgentRun) -> dict:
         plan = self._load_json(run.plan_json, [])
         trace = self._load_json(run.trace_json, [])
-        registry = AgentToolRegistry(self.db, run.user_id, run.document_id)
+        registry = AgentToolRegistry(self.db, run.user_id, run.document_id, run.workspace_id)
+        run.status = "running"
+        self._save_run(run, plan, trace)
         context: dict[str, Any] = {}
 
         for step in plan:
@@ -762,17 +735,41 @@ class AgentRuntime:
                 self._merge_step_output(context, step)
                 continue
             started = time.perf_counter()
+            invocation = None
             try:
                 if step.get("kind") == "model":
+                    invocation = AgentPlatformService(self.db).create_invocation(
+                        run,
+                        "model_generate",
+                        "model",
+                        {"goal": run.goal, "contextKeys": sorted(context.keys())},
+                        "not_required",
+                    )
                     output = self._run_model_step(run, context)
                 else:
                     args = self._resolve_args(step.get("args") or {}, context)
                     spec = next(item for item in registry.specs() if item["name"] == step["tool"])
                     approved = bool(step.get("approved"))
+                    approval_status = "approved" if approved else "pending" if spec["requiresApproval"] else "not_required"
+                    invocation = AgentPlatformService(self.db).create_invocation(
+                        run,
+                        step["tool"],
+                        str(spec.get("toolType") or "builtin"),
+                        args,
+                        approval_status,
+                    )
                     output = registry.execute(step["tool"], args, approved=approved)
                     if output.get("requiresApproval") and not approved:
                         step["status"] = "waiting_approval"
                         step["output"] = output
+                        duration_ms = int((time.perf_counter() - started) * 1000)
+                        AgentPlatformService(self.db).finish_invocation(
+                            invocation,
+                            "waiting_approval",
+                            output,
+                            duration_ms=duration_ms,
+                            approval_status="pending",
+                        )
                         trace.append(
                             self._trace_event(
                                 step,
@@ -789,6 +786,15 @@ class AgentRuntime:
                 step["status"] = "completed"
                 self._merge_step_output(context, step)
                 trace.append(self._trace_event(step, "completed", output, started))
+                if invocation:
+                    duration_ms = int((time.perf_counter() - started) * 1000)
+                    AgentPlatformService(self.db).finish_invocation(
+                        invocation,
+                        "completed",
+                        self._truncate(output),
+                        duration_ms=duration_ms,
+                        approval_status="approved" if step.get("approved") else None,
+                    )
                 self._save_run(run, plan, trace)
             except Exception as exc:
                 step["status"] = "failed"
@@ -796,6 +802,15 @@ class AgentRuntime:
                 trace.append(self._trace_event(step, "failed", {"error": str(exc)}, started))
                 run.status = "failed"
                 run.error = str(exc)
+                if invocation:
+                    duration_ms = int((time.perf_counter() - started) * 1000)
+                    AgentPlatformService(self.db).finish_invocation(
+                        invocation,
+                        "failed",
+                        {"error": str(exc)},
+                        error=str(exc),
+                        duration_ms=duration_ms,
+                    )
                 self._save_run(run, plan, trace)
                 return self.to_dict(run)
 
@@ -987,6 +1002,9 @@ class AgentRuntime:
             "runId": run.id,
             "goal": run.goal,
             "documentId": run.document_id,
+            "workspaceId": run.workspace_id,
+            "skillId": run.skill_id,
+            "executionMode": run.execution_mode,
             "status": run.status,
             "plan": plan,
             "trace": trace,

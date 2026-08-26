@@ -42,6 +42,62 @@ export interface KnowledgeSearchHit {
   content: string;
   score: number;
   matchedTerms: string[];
+  sourceId?: number | null;
+  sourceType?: string;
+  workspaceId?: number | null;
+  pageNumber?: number | null;
+  locationLabel?: string;
+  citation?: KnowledgeCitation;
+}
+
+export interface KnowledgeCitation {
+  sourceId?: number | null;
+  sourceType?: string;
+  title: string;
+  documentId?: number | null;
+  chunkIndex: number;
+  pageNumber?: number | null;
+  locationLabel?: string;
+}
+
+export interface KnowledgeSource {
+  id: number;
+  sourceType: string;
+  title: string;
+  uri: string;
+  ownerId: number;
+  workspaceId?: number | null;
+  documentId?: number | null;
+  status: string;
+  version: number;
+  chunkCount: number;
+  metadata: Record<string, unknown>;
+  indexedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EmbeddingJob {
+  id: number;
+  sourceId?: number | null;
+  documentId?: number | null;
+  workspaceId?: number | null;
+  requestedBy: number;
+  status: string;
+  error: string;
+  retryCount: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt?: string;
+}
+
+export interface KnowledgeStats {
+  sourceCount: number;
+  indexedSourceCount: number;
+  chunkCount: number;
+  failedJobCount: number;
+  coverageRate: number;
+  vectorBackend: string;
 }
 
 export interface KnowledgeAgentResult {
@@ -59,6 +115,8 @@ export interface KnowledgeAgentResult {
 
 export type AgentRunStatus =
   | "planning"
+  | "queued"
+  | "running"
   | "executing"
   | "awaiting_approval"
   | "completed"
@@ -88,6 +146,9 @@ export interface AgentRun {
   runId: number;
   goal: string;
   documentId?: number;
+  workspaceId?: number | null;
+  skillId?: number | null;
+  executionMode?: string;
   status: AgentRunStatus;
   plan: AgentPlanStep[];
   trace: AgentTraceEvent[];
@@ -106,19 +167,93 @@ export interface AgentToolSpec {
   readOnly: boolean;
   requiresApproval: boolean;
   inputSchema: Record<string, string>;
+  toolType?: "builtin" | "mcp" | "model";
+  serverId?: number;
+  serverName?: string;
+}
+
+export interface AgentSkill {
+  id: number;
+  workspaceId?: number | null;
+  slug: string;
+  name: string;
+  description: string;
+  scope: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  isEnabled: boolean;
+  version?: number;
+  prompt?: string;
+  tools: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ToolInvocation {
+  id: number;
+  agentRunId: number;
+  skillId?: number | null;
+  userId: number;
+  workspaceId?: number | null;
+  documentId?: number | null;
+  toolName: string;
+  toolType: string;
+  status: string;
+  approvalStatus: string;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  error: string;
+  durationMs: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export const searchKnowledge = (
   query: string,
-  options: { documentId?: number; topK?: number } = {}
+  options: { documentId?: number; workspaceId?: number; topK?: number } = {}
 ) =>
   aiApi.get("/knowledge/search", {
     params: {
       q: query,
       documentId: options.documentId,
+      workspaceId: options.workspaceId,
       topK: options.topK ?? 8
     }
   });
+
+export const getKnowledgeSources = (workspaceId?: number | null) =>
+  aiApi.get<{ success: boolean; data: KnowledgeSource[] }>("/knowledge/sources", {
+    params: { workspaceId: workspaceId ?? undefined }
+  });
+
+export const getKnowledgeJobs = (workspaceId?: number | null) =>
+  aiApi.get<{ success: boolean; data: EmbeddingJob[] }>("/knowledge/jobs", {
+    params: { workspaceId: workspaceId ?? undefined }
+  });
+
+export const getKnowledgeStats = (workspaceId?: number | null) =>
+  aiApi.get<{ success: boolean; data: KnowledgeStats }>("/knowledge/stats", {
+    params: { workspaceId: workspaceId ?? undefined }
+  });
+
+export const uploadKnowledgeSource = (
+  file: File,
+  options: { workspaceId?: number | null; title?: string } = {}
+) => {
+  const form = new FormData();
+  form.append("file", file);
+  if (options.workspaceId) form.append("workspaceId", String(options.workspaceId));
+  if (options.title) form.append("title", options.title);
+  return aiApi.post<{ success: boolean; data: KnowledgeSource }>(
+    "/knowledge/sources/upload",
+    form
+  );
+};
+
+export const reindexKnowledgeSource = (sourceId: number) =>
+  aiApi.post<{ success: boolean; data: KnowledgeSource }>(
+    `/knowledge/sources/${sourceId}/reindex`
+  );
 
 export const queryKnowledgeAgent = (
   question: string,
@@ -130,10 +265,16 @@ export const queryKnowledgeAgent = (
     topK: options.topK ?? 6
   });
 
-export const runAgent = (goal: string, documentId?: number) =>
+export const runAgent = (
+  goal: string,
+  documentId?: number,
+  options: { skillId?: number | null; executionMode?: string } = {}
+) =>
   aiApi.post<{ success: boolean; data: AgentRun }>("/agent/run", {
     goal,
-    documentId
+    documentId,
+    skillId: options.skillId,
+    executionMode: options.executionMode ?? "inline"
   });
 
 export const approveAgentRun = (runId: number, approved: boolean) =>
@@ -152,6 +293,16 @@ export const getAgentRuns = (documentId?: number) =>
 
 export const getAgentTools = () =>
   aiApi.get<{ success: boolean; data: AgentToolSpec[] }>("/agent/tools");
+
+export const getAgentSkills = (workspaceId?: number | null) =>
+  aiApi.get<{ success: boolean; data: AgentSkill[] }>("/agent/skills", {
+    params: { workspaceId: workspaceId ?? undefined }
+  });
+
+export const getAgentRunInvocations = (runId: number) =>
+  aiApi.get<{ success: boolean; data: ToolInvocation[] }>(
+    `/agent/runs/${runId}/invocations`
+  );
 
 export const getAgentMemories = (documentId?: number) =>
   aiApi.get<{ success: boolean; data: Array<Record<string, unknown>> }>(

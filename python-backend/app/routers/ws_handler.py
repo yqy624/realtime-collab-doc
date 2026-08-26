@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -11,15 +12,10 @@ from app.models.operation_log import OperationLog
 from app.models.user import User
 from app.services.document_service import DocumentService
 from app.services.ot_service import OTOperation, OTService
-from app.services.session_manager import session_manager
+from app.services.collaboration_hub import collaboration_hub
 from app.utils.jwt import verify_token
 
 MENTION_PATTERN = re.compile(r"(^|\s)@([\w\-一-龥]+)")
-
-# doc_id -> set of WebSocket connections
-_doc_connections: dict[int, set[WebSocket]] = {}
-# ws -> username
-_ws_user: dict[int, str] = {}
 
 
 async def websocket_endpoint(ws: WebSocket):
@@ -45,9 +41,7 @@ async def websocket_endpoint(ws: WebSocket):
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-        # Track this connection
-        ws_id = id(ws)
-        _ws_user[ws_id] = username
+        connection_id = collaboration_hub.connection_id()
         current_doc_id: Optional[int] = None
 
         while True:
@@ -76,17 +70,15 @@ async def websocket_endpoint(ws: WebSocket):
                         continue
                     if current_doc_id is not None:
                         old_doc_id = current_doc_id
-                        _unregister_connection(ws, old_doc_id)
-                        await _handle_leave(db, old_doc_id, user)
+                        await _handle_leave(ws, old_doc_id, user, connection_id)
                         current_doc_id = None
-                    await _handle_join(ws, db, doc_id, user)
+                    await _handle_join(ws, db, doc_id, user, connection_id)
                     current_doc_id = doc_id
 
                 elif msg_type == "LEAVE":
                     if current_doc_id != doc_id:
                         raise PermissionError("Join this document before leaving it")
-                    _unregister_connection(ws, doc_id)
-                    await _handle_leave(db, doc_id, user)
+                    await _handle_leave(ws, doc_id, user, connection_id)
                     current_doc_id = None
 
                 elif msg_type == "EDIT":
@@ -101,6 +93,10 @@ async def websocket_endpoint(ws: WebSocket):
                     _assert_joined_document(db, doc_id, user, current_doc_id)
                     await _handle_cursor(doc_id, user, msg.get("cursorPosition"))
 
+                elif msg_type == "HEARTBEAT":
+                    _assert_joined_document(db, doc_id, user, current_doc_id)
+                    await _handle_heartbeat(doc_id, connection_id)
+
                 else:
                     await _send_ws(ws, {"type": "ERROR", "message": f"Unknown type: {msg_type}"})
 
@@ -114,31 +110,14 @@ async def websocket_endpoint(ws: WebSocket):
     finally:
         # Cleanup
         if current_doc_id:
-            _unregister_connection(ws, current_doc_id)
-            await _handle_leave(db, current_doc_id, user)
-        _ws_user.pop(id(ws), None)
+            await _handle_leave(ws, current_doc_id, user, connection_id)
         db.close()
 
 
-def _register_connection(ws: WebSocket, doc_id: int):
-    if doc_id not in _doc_connections:
-        _doc_connections[doc_id] = set()
-    _doc_connections[doc_id].add(ws)
-
-
-def _unregister_connection(ws: WebSocket, doc_id: int):
-    conns = _doc_connections.get(doc_id)
-    if conns:
-        conns.discard(ws)
-        if not conns:
-            del _doc_connections[doc_id]
-
-
-async def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
+async def _handle_join(ws: WebSocket, db, doc_id: int, user: User, connection_id: str):
     svc = DocumentService(db)
     doc = svc.find_accessible(doc_id, user.id)
-    _register_connection(ws, doc_id)
-    online = session_manager.join(doc_id, user.username)
+    online = await collaboration_hub.join(ws, doc_id, connection_id, user.username)
     await _broadcast(doc_id, {
         "type": "PRESENCE",
         "documentId": doc_id,
@@ -154,8 +133,18 @@ async def _handle_join(ws: WebSocket, db, doc_id: int, user: User):
     })
 
 
-async def _handle_leave(db, doc_id: int, user: User):
-    online = session_manager.leave(doc_id, user.username)
+async def _handle_leave(ws: WebSocket, doc_id: int, user: User, connection_id: str):
+    online = await collaboration_hub.leave(ws, doc_id, connection_id)
+    await _broadcast(doc_id, {
+        "type": "PRESENCE",
+        "documentId": doc_id,
+        "onlineUsers": online,
+        "timestamp": datetime.now().isoformat(),
+    })
+
+
+async def _handle_heartbeat(doc_id: int, connection_id: str):
+    online = await collaboration_hub.heartbeat(doc_id, connection_id)
     await _broadcast(doc_id, {
         "type": "PRESENCE",
         "documentId": doc_id,
@@ -171,9 +160,9 @@ async def _handle_edit(db, doc_id: int, user: User, op_data: dict):
     svc = DocumentService(db)
     doc = svc.find_entity(doc_id)
 
-    # 权限校验：仅 owner / edit 权限可编辑，view 权限拒绝
+    # 权限校验：仅 owner / manage / edit 权限可编辑，view/comment 权限拒绝
     perm = svc._get_user_permission(doc, user.id)
-    if perm not in ("owner", "edit"):
+    if perm not in ("owner", "manage", "edit"):
         raise PermissionError("当前用户仅有查看权限")
 
     incoming = _to_ot_op(op_data)
@@ -190,7 +179,8 @@ async def _handle_edit(db, doc_id: int, user: User, op_data: dict):
     doc.revision = current_revision + 1
     svc.save(doc)
 
-    _save_op_log(db, doc_id, user.id, transformed, doc.revision)
+    request_id = str(op_data.get("requestId") or uuid.uuid4())
+    _save_op_log(db, doc_id, user.id, transformed, doc.revision, request_id)
 
     await _broadcast(doc_id, {
         "type": "EDIT",
@@ -201,6 +191,7 @@ async def _handle_edit(db, doc_id: int, user: User, op_data: dict):
         "content": doc.content,
         "revision": doc.revision,
         "operation": _op_to_dict(transformed),
+        "requestId": request_id,
         "timestamp": datetime.now().isoformat(),
     })
 
@@ -232,7 +223,7 @@ async def _handle_chat(db, doc_id: int, user: User, chat_text: str):
         "createdAt": msg.created_at.isoformat() if msg.created_at else None,
     }
     await _broadcast(doc_id, payload)
-    _handle_mentions(doc_id, user, payload)
+    await _handle_mentions(doc_id, user, payload)
 
 
 async def _handle_cursor(doc_id: int, user: User, cursor_pos):
@@ -257,8 +248,8 @@ def _extract_mentions(text: str) -> set[str]:
     return {m.group(2) for m in MENTION_PATTERN.finditer(text)}
 
 
-def _handle_mentions(doc_id: int, sender: User, payload: dict):
-    online = session_manager.get_online_users(doc_id)
+async def _handle_mentions(doc_id: int, sender: User, payload: dict):
+    online = await collaboration_hub.get_online_users(doc_id)
     mentioned = _extract_mentions(payload.get("message", ""))
     mentioned &= set(online)
     mentioned.discard(sender.username)
@@ -272,25 +263,11 @@ def _handle_mentions(doc_id: int, sender: User, payload: dict):
 
 
 async def _broadcast(doc_id: int, data: dict):
-    """Send JSON to every WebSocket connected to this document."""
-    message = json.dumps(data, ensure_ascii=False)
-    dead = set()
-    for ws in _doc_connections.get(doc_id, set()):
-        try:
-            await ws.send_text(message)
-        except Exception:
-            dead.add(ws)
-    if dead:
-        _doc_connections[doc_id] -= dead
-        if not _doc_connections[doc_id]:
-            del _doc_connections[doc_id]
+    await collaboration_hub.broadcast(doc_id, data)
 
 
 async def _send_ws(ws: WebSocket, data: dict):
-    try:
-        await ws.send_text(json.dumps(data, ensure_ascii=False))
-    except Exception:
-        pass
+    await collaboration_hub.send_to_socket(ws, data)
 
 
 def _to_ot_op(data: dict) -> OTOperation:
@@ -332,7 +309,7 @@ def _transform_against_logs(db, doc_id: int, incoming: OTOperation, base_revisio
     return transformed
 
 
-def _save_op_log(db, doc_id: int, user_id: int, op: OTOperation, revision: int):
+def _save_op_log(db, doc_id: int, user_id: int, op: OTOperation, revision: int, request_id: str):
     content = "#" * max(op.length, 0) if op.type == "DELETE" and op.length else (op.content or "")
     db.add(OperationLog(
         document_id=doc_id,
@@ -341,4 +318,8 @@ def _save_op_log(db, doc_id: int, user_id: int, op: OTOperation, revision: int):
         position=op.position or 0,
         content=content,
         revision=revision,
+        client_id=op.client_id or "",
+        request_id=request_id,
+        server_instance=collaboration_hub.instance_id,
     ))
+    db.commit()

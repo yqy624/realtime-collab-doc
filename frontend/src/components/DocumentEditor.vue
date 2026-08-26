@@ -10,17 +10,32 @@
 
     <div class="editor-toolbar">
       <div class="toolbar-left">
-        <span class="save-indicator" :class="saveStatusClass">
+        <span v-if="readonly" class="save-indicator" :class="saveStatusClass">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
             <polyline points="17 21 17 13 7 13 7 21"/>
             <polyline points="7 3 7 8 15 8"/>
           </svg>
-          <span v-if="readonly">历史版本只读</span>
-          <span v-else-if="saveStatus === 'saved'">已保存</span>
+          <span>历史版本只读</span>
+        </span>
+        <button
+          v-else
+          class="save-indicator save-action"
+          :class="saveStatusClass"
+          type="button"
+          :disabled="saveStatus !== 'unsaved'"
+          :aria-label="saveStatus === 'unsaved' ? '保存未保存的更改' : saveStatus === 'saving' ? '正在保存' : '已保存'"
+          @click="$emit('save')"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          <span v-if="saveStatus === 'saved'">已保存</span>
           <span v-else-if="saveStatus === 'unsaved'">未保存的更改</span>
           <span v-else>正在保存...</span>
-        </span>
+        </button>
         <button v-if="!readonly" class="tool-btn submit-btn" @click="$emit('submit-version')" :disabled="saveStatus === 'saving'">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 3v12"/>
@@ -89,6 +104,7 @@ const emit = defineEmits<{
   (e: "title-change", value: string): void;
   (e: "content-change", payload: TextOperation): void;
   (e: "cursor-change", position: number): void;
+  (e: "save"): void;
   (e: "submit-version"): void;
 }>();
 
@@ -303,6 +319,22 @@ const createOperation = (previous: string, current: string, revision: number): T
   border-radius: 999px;
   background: #fff;
   border: 1px solid var(--line);
+  font-family: inherit;
+}
+.save-action {
+  cursor: default;
+  transition: all 0.15s;
+}
+.save-action.save-status-unsaved {
+  cursor: pointer;
+}
+.save-action.save-status-unsaved:hover {
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.45);
+  background: #dbeafe;
+}
+.save-action:disabled {
+  cursor: default;
 }
 .save-indicator.save-status-saved {
   color: #12b76a;

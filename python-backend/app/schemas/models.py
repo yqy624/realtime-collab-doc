@@ -38,9 +38,15 @@ class DocumentDTO(BaseModel):
     creatorId: Optional[int] = None
     creatorName: Optional[str] = None
     isPublic: Optional[bool] = None
+    workspaceId: Optional[int] = None
+    folderId: Optional[int] = None
+    contentFormat: Optional[str] = None
     revision: Optional[int] = None
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
+    deletedAt: Optional[str] = None
+    deletedBy: Optional[int] = None
+    deleteReason: Optional[str] = None
     permission: Optional[str] = None  # owner | edit | view
     shareToken: Optional[str] = None
     sharePermission: Optional[str] = None

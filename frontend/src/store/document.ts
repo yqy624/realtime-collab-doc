@@ -5,10 +5,18 @@ export interface DocumentItem {
   title: string;
   content: string;
   creatorId: number;
+  creatorName?: string;
   isPublic: boolean;
+  workspaceId?: number | null;
+  folderId?: number | null;
+  contentFormat?: string;
+  permission?: string;
   revision: number;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string | null;
+  deletedBy?: number | null;
+  deleteReason?: string;
 }
 
 export const useDocumentStore = defineStore("document", {

@@ -6,7 +6,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.database import Base
 from app.models.document import Document
+from app.models.tool_invocation import ToolInvocation
 from app.models.user import User
+from app.services.agent_platform_service import AgentPlatformService
 from app.services.agent_runtime import AgentPlanner, AgentRuntime, AgentToolRegistry
 
 
@@ -59,6 +61,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.db.add(self.document)
         self.db.commit()
+        AgentPlatformService(self.db).seed_defaults(self.user.id)
 
     def tearDown(self):
         self.db.rollback()
@@ -103,18 +106,65 @@ class AgentRuntimeTests(unittest.TestCase):
 
         completed = runtime.approve(pending["runId"], self.user.id, True)
 
+        self.db.refresh(self.document)
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(self.document.content, "更新后的文档内容")
         self.assertGreater(self.document.revision, 0)
 
     def test_tool_specs_include_web_search(self):
-        specs = AgentToolRegistry.specs()
+        specs = AgentToolRegistry(self.db, self.user.id, self.document.id).specs()
         names = {item["name"] for item in specs}
 
         self.assertIn("web_search", names)
         web_search = next(item for item in specs if item["name"] == "web_search")
         self.assertTrue(web_search["readOnly"])
         self.assertFalse(web_search["requiresApproval"])
+
+    def test_skill_run_records_skill_and_tool_invocations(self):
+        skill = next(
+            item
+            for item in AgentPlatformService(self.db).list_skills(self.user.id)
+            if item["slug"] == "summary"
+        )
+
+        result = AgentRuntime(self.db, llm=FakeLLM()).start(
+            "总结当前文档",
+            self.user.id,
+            self.document.id,
+            skill_id=skill["id"],
+        )
+
+        invocations = (
+            self.db.query(ToolInvocation)
+            .filter(ToolInvocation.agent_run_id == result["runId"])
+            .order_by(ToolInvocation.id.asc())
+            .all()
+        )
+        self.assertEqual(result["skillId"], skill["id"])
+        self.assertEqual(result["executionMode"], "inline")
+        self.assertTrue(invocations)
+        self.assertTrue(all(row.skill_id == skill["id"] for row in invocations))
+        self.assertIn("model_generate", [row.tool_name for row in invocations])
+
+    def test_write_tool_invocation_waits_for_approval(self):
+        pending = AgentRuntime(self.db, llm=FakeLLM()).start(
+            "修改当前文档，重写成更清晰的版本",
+            self.user.id,
+            self.document.id,
+        )
+
+        row = (
+            self.db.query(ToolInvocation)
+            .filter(
+                ToolInvocation.agent_run_id == pending["runId"],
+                ToolInvocation.tool_name == "apply_document_content",
+            )
+            .first()
+        )
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row.status, "waiting_approval")
+        self.assertEqual(row.approval_status, "pending")
 
 
 if __name__ == "__main__":

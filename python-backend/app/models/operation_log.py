@@ -22,4 +22,7 @@ class OperationLog(Base):
     position = Column(Integer, nullable=False, default=0)
     content = Column(Text, default="")
     revision = Column(Integer, nullable=False)
+    client_id = Column(String(120), nullable=False, default="")
+    request_id = Column(String(120), nullable=False, default="")
+    server_instance = Column(String(120), nullable=False, default="")
     created_at = Column(DateTime, default=datetime.now, server_default=func.now())

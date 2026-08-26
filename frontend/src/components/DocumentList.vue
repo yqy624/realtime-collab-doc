@@ -46,11 +46,18 @@
         </p>
         <div class="card-foot">
           <span class="revision">v{{ doc.revision }}</span>
-          <button
-            v-if="doc.permission === 'owner'"
-            class="share-btn"
-            @click.stop="$emit('share', doc)"
-          >🔗 分享</button>
+          <div class="card-actions">
+            <button
+              v-if="doc.permission === 'owner' || doc.permission === 'manage'"
+              class="action-btn"
+              @click.stop="$emit('move', doc)"
+            >移动</button>
+            <button
+              v-if="doc.permission === 'owner' || doc.permission === 'manage'"
+              class="action-btn"
+              @click.stop="$emit('share', doc)"
+            >分享</button>
+          </div>
         </div>
       </article>
     </div>
@@ -75,6 +82,8 @@ interface Doc {
   isPublic?: boolean;
   permission?: string;
   creatorName?: string;
+  workspaceId?: number | null;
+  folderId?: number | null;
   updatedAt?: string;
   canDelete?: boolean;
 }
@@ -86,6 +95,7 @@ defineEmits<{
   (e: "create"): void;
   (e: "delete", doc: Doc): void;
   (e: "share", doc: Doc): void;
+  (e: "move", doc: Doc): void;
 }>();
 
 const keyword = ref("");
@@ -118,14 +128,16 @@ const filtered = computed(() => {
 });
 
 const permClass = (p?: string) => {
-  if (p === "owner") return "owner";
-  if (p === "edit") return "edit";
+  if (p === "owner" || p === "manage") return "owner";
+  if (p === "edit" || p === "comment") return "edit";
   return "view";
 };
 
 const permLabel = (doc: Doc) => {
   if (doc.permission === "owner") return "我创建的";
+  if (doc.permission === "manage") return "可管理";
   if (doc.permission === "edit") return "可编辑";
+  if (doc.permission === "comment") return "可评论";
   if (doc.isPublic) return "公开";
   return "可查看";
 };
@@ -261,7 +273,11 @@ const fmtTime = (t?: string) => {
   border-top: 1px dashed #eef0f4;
 }
 .revision { font-size: 11px; color: #b0b8c4; }
-.share-btn {
+.card-actions {
+  display: flex;
+  gap: 6px;
+}
+.action-btn {
   border: 1px solid #e2e8f0;
   background: #fff;
   border-radius: 8px;
@@ -270,7 +286,7 @@ const fmtTime = (t?: string) => {
   color: #475569;
   cursor: pointer;
 }
-.share-btn:hover { border-color: #3b82f6; color: #2563eb; }
+.action-btn:hover { border-color: #3b82f6; color: #2563eb; }
 
 .empty-box {
   text-align: center;

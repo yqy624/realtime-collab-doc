@@ -91,6 +91,7 @@
         @title-change="updateTitle"
         @content-change="handleContentChange"
         @cursor-change="sendCursor"
+        @save="handleSave"
         @submit-version="handleSubmitVersion"
       />
       <ChatHistoryViewer
@@ -150,6 +151,7 @@
         <KnowledgeAgentPanel
           v-else
           :scope-document-id="documentId"
+          :workspace-id="documentStore.currentDocument.workspaceId"
           @history-change="loadAssistantHistories"
         />
       </div>
@@ -288,7 +290,7 @@ import DocumentEditor from "../components/DocumentEditor.vue";
 import ChatHistoryViewer from "../components/ChatHistoryViewer.vue";
 import UserList from "../components/UserList.vue";
 import ShareDialog from "../components/ShareDialog.vue";
-import { fetchMessages, getDocument, getSnapshots, restoreSnapshot, saveDocument, updateDocument } from "../api/document";
+import { fetchMessages, getDocument, getSnapshots, persistDocument, restoreSnapshot, saveDocument, updateDocument } from "../api/document";
 import {
   getAgentRuns,
   getAIHistory,
@@ -365,7 +367,7 @@ const showInfo = ref(false);
 const showHistory = ref(false);
 const showShare = ref(false);
 const canShare = computed(
-  () => documentStore.currentDocument?.permission === "owner"
+  () => ["owner", "manage"].includes(documentStore.currentDocument?.permission || "")
 );
 const snapshots = ref<SnapshotItem[]>([]);
 const loadingHistory = ref(false);
@@ -375,6 +377,7 @@ const activeRightPanel = ref<"chat" | "ai" | "agent">("chat");
 const editorRef = ref<InstanceType<typeof DocumentEditor> | null>(null);
 const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null);
 const activeHistory = ref<HistorySelection | null>(null);
+const pendingEditRequestIds = new Set<string>();
 
 const documentId = Number(route.params.id);
 
@@ -511,17 +514,23 @@ const connectSocket = () => {
         username?: string;
         content?: string;
         revision?: number;
+        requestId?: string;
         cursorPosition?: number;
         chatMessage?: string;
       };
       if (!documentStore.currentDocument) return;
       if (message.type === "SYNC" || message.type === "EDIT") {
+        if (message.type === "EDIT" && message.userId === userStore.userId && message.requestId) {
+          pendingEditRequestIds.delete(message.requestId);
+        }
         documentStore.setCurrentDocument({
           ...documentStore.currentDocument,
           content: message.content ?? documentStore.currentDocument.content,
           revision: message.revision ?? documentStore.currentDocument.revision
         });
-        saveStatus.value = "saved";
+        if (message.type === "SYNC" || (message.userId !== userStore.userId && saveStatus.value !== "unsaved")) {
+          saveStatus.value = "saved";
+        }
       }
       if (message.type === "CURSOR" && message.userId && message.userId !== userStore.userId) {
         remoteCursors.value = [
@@ -570,13 +579,52 @@ onBeforeUnmount(() => {
 });
 
 const handleContentChange = (operation: TextOperation) => {
+  const requestId = crypto.randomUUID();
+  pendingEditRequestIds.add(requestId);
   saveStatus.value = "unsaved";
   socket.send({
     type: "EDIT",
     documentId,
     userId: userStore.userId,
-    operation: { ...operation, clientId: `${userStore.userId ?? "guest"}` }
+    operation: {
+      ...operation,
+      clientId: `${userStore.userId ?? "guest"}`,
+      requestId
+    }
   });
+};
+
+const waitForPendingEdits = async () => {
+  const startedAt = Date.now();
+  while (pendingEditRequestIds.size > 0) {
+    if (Date.now() - startedAt > 5000) {
+      return false;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+  }
+  return true;
+};
+
+const handleSave = async () => {
+  if (!documentStore.currentDocument || saveStatus.value !== "unsaved") return;
+
+  saveStatus.value = "saving";
+  try {
+    const synced = await waitForPendingEdits();
+    if (!synced) {
+      throw new Error("保存失败，请检查协作连接后重试");
+    }
+    const { data } = await persistDocument(documentId);
+    if (data.success === false) {
+      throw new Error(data.message || "保存失败");
+    }
+    documentStore.setCurrentDocument(data.data);
+    saveStatus.value = "saved";
+    ElMessage.success("已保存");
+  } catch (error: any) {
+    saveStatus.value = "unsaved";
+    ElMessage.error(error?.response?.data?.message || error?.message || "保存失败");
+  }
 };
 
 const handleSubmitVersion = async () => {
@@ -743,6 +791,8 @@ const getEditorSelection = (): SelectionInfo | null => {
 
 const sendFullSync = (content: string) => {
   if (!documentStore.currentDocument) return;
+  const requestId = crypto.randomUUID();
+  pendingEditRequestIds.add(requestId);
   documentStore.setCurrentDocument({
     ...documentStore.currentDocument,
     content
@@ -757,7 +807,8 @@ const sendFullSync = (content: string) => {
       position: 0,
       content,
       revision: documentStore.currentDocument.revision,
-      clientId: `${userStore.userId ?? "guest"}-ai`
+      clientId: `${userStore.userId ?? "guest"}-ai`,
+      requestId
     }
   });
 };

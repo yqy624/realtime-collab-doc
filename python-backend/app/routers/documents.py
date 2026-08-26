@@ -21,16 +21,52 @@ class SharePermissionRequest(BaseModel):
     permission: str = "view"
 
 
+class DocumentPermissionRequest(BaseModel):
+    username: str
+    permission: str = "view"
+
+
+class DeleteDocumentRequest(BaseModel):
+    reason: str = "user_deleted"
+
+
 @router.get("")
-def list_documents(user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    docs = DocumentService(db).get_documents_for_user(user_id)
+def list_documents(
+    workspaceId: int | None = None,
+    folderId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    docs = DocumentService(db).get_documents_for_user(user_id, workspaceId, folderId)
     return ApiResponse.ok(docs)
 
 
 @router.post("")
 def create_document(body: DocumentDTO, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    result = DocumentService(db).create_document(body.title, body.content, body.isPublic, user_id)
-    return ApiResponse.ok(result)
+    try:
+        result = DocumentService(db).create_document(
+            body.title,
+            body.content,
+            body.isPublic,
+            user_id,
+            workspace_id=body.workspaceId,
+            folder_id=body.folderId,
+            content_format=body.contentFormat,
+        )
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.get("/trash")
+def list_deleted_documents(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(DocumentService(db).get_deleted_documents_for_user(user_id))
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
 
 
 @router.get("/{doc_id}")
@@ -46,7 +82,7 @@ def get_document(doc_id: int, user_id: int = Depends(get_current_user_id), db: S
 def update_document(doc_id: int, body: DocumentDTO, user_id: int = Depends(get_current_user_id),
                     db: Session = Depends(get_db)):
     try:
-        data = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+        data = body.model_dump(exclude_unset=True)
         result = DocumentService(db).update_document(doc_id, data, user_id)
         return ApiResponse.ok(result)
     except ValueError as e:
@@ -54,10 +90,32 @@ def update_document(doc_id: int, body: DocumentDTO, user_id: int = Depends(get_c
 
 
 @router.delete("/{doc_id}")
-def delete_document(doc_id: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def delete_document(
+    doc_id: int,
+    permanent: bool = False,
+    reason: str = "user_deleted",
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     try:
-        DocumentService(db).delete_document(doc_id, user_id)
+        service = DocumentService(db)
+        if permanent:
+            service.hard_delete_document(doc_id, user_id)
+        else:
+            service.delete_document(doc_id, user_id, reason)
         return ApiResponse.ok(None)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.post("/{doc_id}/restore")
+def restore_deleted_document(
+    doc_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(DocumentService(db).restore_deleted_document(doc_id, user_id))
     except ValueError as e:
         return ApiResponse.fail(str(e))
 
@@ -94,6 +152,17 @@ def save_document(doc_id: int, body: DocumentDTO | None = None,
     try:
         data = body.model_dump(exclude_none=True) if body else None
         result = DocumentService(db).save_snapshot(doc_id, data, user_id)
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.post("/{doc_id}/persist")
+def persist_document(doc_id: int, body: DocumentDTO | None = None,
+                     user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    try:
+        data = body.model_dump(exclude_none=True) if body else None
+        result = DocumentService(db).persist_document(doc_id, data, user_id)
         return ApiResponse.ok(result)
     except ValueError as e:
         return ApiResponse.fail(str(e))
@@ -173,5 +242,55 @@ def remove_share_user(doc_id: int, target_user_id: int,
     try:
         result = DocumentService(db).unshare_user(doc_id, user_id, target_user_id)
         return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+# ==================== 平台化文档权限 ====================
+
+@router.get("/{doc_id}/permissions")
+def list_document_permissions(
+    doc_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        from app.services.platform_service import PlatformService
+        return ApiResponse.ok(PlatformService(db).list_document_permissions(doc_id, user_id))
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.post("/{doc_id}/permissions")
+def grant_document_permission(
+    doc_id: int,
+    body: DocumentPermissionRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        from app.services.platform_service import PlatformService
+        result = PlatformService(db).upsert_document_permission(
+            doc_id,
+            user_id,
+            body.username,
+            body.permission,
+        )
+        return ApiResponse.ok(result)
+    except ValueError as e:
+        return ApiResponse.fail(str(e))
+
+
+@router.delete("/{doc_id}/permissions/{target_user_id}")
+def revoke_document_permission(
+    doc_id: int,
+    target_user_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        from app.services.platform_service import PlatformService
+        PlatformService(db).remove_document_permission(doc_id, user_id, target_user_id)
+        return ApiResponse.ok(None)
     except ValueError as e:
         return ApiResponse.fail(str(e))

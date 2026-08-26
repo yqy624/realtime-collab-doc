@@ -1,14 +1,15 @@
 from typing import Iterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.models.database import get_db
 from app.schemas.models import ApiResponse
 from app.services.ai_service import AIAgentRunner, ResultFormatter
 from app.services.agent_chain import KnowledgeAgent
+from app.services.agent_platform_service import AgentPlatformService
 from app.services.agent_runtime import AgentRuntime
 from app.services.document_service import DocumentService
 from app.services.rag_service import RAGService
@@ -36,16 +37,27 @@ class StreamRequest(BaseModel):
 class KnowledgeAgentRequest(BaseModel):
     question: str
     documentId: int | None = None
+    workspaceId: int | None = None
     topK: int = 6
 
 
 class AgentRunRequest(BaseModel):
     goal: str
     documentId: int | None = None
+    skillId: int | None = None
+    executionMode: str = "inline"
 
 
 class AgentApprovalRequest(BaseModel):
     approved: bool
+
+
+class MCPServerRequest(BaseModel):
+    workspaceId: int | None = None
+    name: str
+    transport: str = "stdio"
+    connection: dict = Field(default_factory=dict)
+    isEnabled: bool = True
 
 
 def _get_document(doc_id: int, user_id: int, db: Session):
@@ -56,6 +68,7 @@ def _get_document(doc_id: int, user_id: int, db: Session):
 def search_knowledge(
     q: str,
     documentId: int | None = None,
+    workspaceId: int | None = None,
     topK: int = 8,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -68,9 +81,86 @@ def search_knowledge(
                 q,
                 user_id,
                 document_id=documentId,
+                workspace_id=workspaceId,
                 top_k=topK,
             )
         )
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.get("/knowledge/sources")
+def list_knowledge_sources(
+    workspaceId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(RAGService(db).list_sources(user_id, workspaceId))
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.post("/knowledge/sources/upload")
+async def upload_knowledge_source(
+    request: Request,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        form = await request.form()
+        file = form.get("file")
+        if file is None or not hasattr(file, "read"):
+            raise ValueError("请选择要上传的知识库文件")
+        workspace_raw = form.get("workspaceId")
+        workspace_id = int(workspace_raw) if workspace_raw not in (None, "", "null") else None
+        title = str(form.get("title") or "").strip() or None
+        content = await file.read()
+        result = RAGService(db).import_file(
+            file.filename or "upload.txt",
+            content,
+            file.content_type or "application/octet-stream",
+            user_id,
+            workspace_id=workspace_id,
+            title=title,
+        )
+        return ApiResponse.ok(result)
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.post("/knowledge/sources/{source_id}/reindex")
+def reindex_knowledge_source(
+    source_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(RAGService(db).reindex_source(source_id, user_id))
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.get("/knowledge/jobs")
+def list_embedding_jobs(
+    workspaceId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(RAGService(db).list_jobs(user_id, workspaceId))
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.get("/knowledge/stats")
+def get_knowledge_stats(
+    workspaceId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(RAGService(db).coverage_stats(user_id, workspaceId))
     except ValueError as exc:
         return ApiResponse.fail(str(exc))
 
@@ -94,8 +184,45 @@ def query_knowledge_agent(
 
 
 @router.get("/agent/tools")
-def list_agent_tools():
-    return ApiResponse.ok(AgentRuntime.tool_specs())
+def list_agent_tools(
+    workspaceId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return ApiResponse.ok(AgentPlatformService(db).list_tool_specs(user_id, workspaceId))
+
+
+@router.get("/agent/skills")
+def list_agent_skills(
+    workspaceId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return ApiResponse.ok(AgentPlatformService(db).list_skills(user_id, workspaceId))
+
+
+@router.get("/agent/mcp/servers")
+def list_mcp_servers(
+    workspaceId: int | None = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(AgentPlatformService(db).list_mcp_servers(user_id, workspaceId))
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.post("/agent/mcp/servers")
+def create_mcp_server(
+    body: MCPServerRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        return ApiResponse.ok(AgentPlatformService(db).create_mcp_server(user_id, body.model_dump()))
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
 
 
 @router.get("/agent/runs")
@@ -120,6 +247,8 @@ def run_agent(
             body.goal,
             user_id,
             document_id=body.documentId,
+            skill_id=body.skillId,
+            execution_mode=body.executionMode,
         )
         return ApiResponse.ok(result)
     except (ValueError, ConnectionError, RuntimeError) as exc:
@@ -134,6 +263,19 @@ def get_agent_run(
 ):
     try:
         return ApiResponse.ok(AgentRuntime(db).get_run(run_id, user_id))
+    except ValueError as exc:
+        return ApiResponse.fail(str(exc))
+
+
+@router.get("/agent/runs/{run_id}/invocations")
+def list_agent_run_invocations(
+    run_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        AgentRuntime(db).get_run(run_id, user_id)
+        return ApiResponse.ok(AgentPlatformService(db).list_invocations(run_id, user_id))
     except ValueError as exc:
         return ApiResponse.fail(str(exc))
 

@@ -16,6 +16,7 @@ export class CollabSocket {
   private connected = false;
   private pendingPayloads: unknown[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private handlers: WsHandlers = {};
   private documentId = 0;
   private shouldReconnect = false;
@@ -44,6 +45,7 @@ export class CollabSocket {
         type: "JOIN",
         documentId: this.documentId
       });
+      this.startHeartbeat();
     };
 
     this.socket.onmessage = (event) => {
@@ -57,6 +59,7 @@ export class CollabSocket {
 
     this.socket.onclose = () => {
       this.connected = false;
+      this.stopHeartbeat();
       this.handlers.onDisconnect?.();
       this.scheduleReconnect();
     };
@@ -101,6 +104,7 @@ export class CollabSocket {
 
     this.socket?.close();
     this.socket = null;
+    this.stopHeartbeat();
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -135,5 +139,21 @@ export class CollabSocket {
         this.doConnect();
       }
     }, 3000);
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      this.send({
+        type: "HEARTBEAT",
+        documentId: this.documentId
+      });
+    }, 15000);
+  }
+
+  private stopHeartbeat() {
+    if (!this.heartbeatTimer) return;
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
   }
 }

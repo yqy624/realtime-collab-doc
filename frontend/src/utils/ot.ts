@@ -5,4 +5,5 @@ export interface TextOperation {
   content?: string;
   revision?: number;
   clientId?: string;
+  requestId?: string;
 }

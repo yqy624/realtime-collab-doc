@@ -6,10 +6,13 @@
 
 - JWT 认证：注册 / 登录 / 接口鉴权
 - 文档管理：创建、编辑、删除、列表、快照与版本恢复
-- 实时协作：WebSocket + 操作转换（OT），多人同时编辑同一文档
+- 平台化工作区：个人空间、多空间、文件夹、成员角色与文档级权限底座
+- 数据治理：Alembic 迁移骨架、审计日志、文档回收站、恢复与彻底删除
+- 实时协作：WebSocket + 操作转换（OT），支持本地房间广播，并可通过 Redis Pub/Sub 扩展到多后端实例
 - 文档内聊天与在线用户实时列表
 - 分享链接：生成分享链接，支持只读 / 可编辑权限控制
 - AI 助手：集成 Ollama 本地大模型（默认 `granite4.1:8b`），可在文档内对话
+- Agent 平台：Skill 注册表、MCP server/tool 配置清单、工具调用追踪、审批式文档写回
 - 子路径部署：支持 Nginx 反向代理挂载在 `/new/` 路径
 
 ## RAG and Agent Workflow
@@ -31,6 +34,62 @@ POST /api/ai/agent/query
 ```
 
 The first version uses lexical retrieval so it can run without a GPU or embedding model. The retriever can later be extended with embeddings and hybrid ranking without changing the frontend contract or Agent chain.
+
+## Platform Architecture
+
+The project now includes the first layer of a workspace-oriented platform:
+
+- `workspaces` and `workspace_members` model multi-space collaboration.
+- `folders` lets documents belong to a workspace folder.
+- `document_permissions` adds explicit document-level permissions.
+- `documents.workspace_id`, `documents.folder_id`, and `documents.content_format` prepare the document model for richer content and future block editing.
+
+See `docs/platform-architecture-roadmap.md` for the long-term path toward Redis-backed collaboration, Alembic migrations, async Agent execution, MCP tool integration, and hybrid RAG.
+
+## Agent Platform
+
+The fourth-stage Agent foundation is database-backed:
+
+- Skills are seeded as reusable records: 知识问答、文档总结、改写润色、周报生成、会议纪要。
+- Agent runs can select a `skillId`; runs keep `queued/running/awaiting_approval/completed/failed/cancelled` status for future worker execution.
+- Built-in tools and configured MCP tools are exposed through `/api/ai/agent/tools`.
+- Every model/tool step writes a `tool_invocations` record with input, output, approval status, duration, and error details.
+- Document mutation tools still require approval before writeback.
+- The frontend has an Agent Center overview and an editor-side Skill picker.
+
+## Database Migrations
+
+The backend still supports automatic table creation for local development when
+`AUTO_CREATE_TABLES_ON_STARTUP=true`, but long-term schema changes now have an
+Alembic scaffold in `python-backend/alembic`. For production-style migration
+checks:
+
+```bash
+.\scripts\migrate-db.ps1
+```
+
+The first governance migration adds audit logs, document soft-delete metadata,
+and platform indexes.
+
+The second Agent-platform migration adds `skills`, `skill_versions`,
+`mcp_servers`, `mcp_tools`, and `tool_invocations`, plus `agent_runs.skill_id`
+and `agent_runs.execution_mode`.
+
+Seed data is idempotent and can be run outside app startup:
+
+```bash
+.\scripts\seed-db.ps1
+```
+
+For local development only, reset the database and seed demo accounts:
+
+```bash
+.\scripts\reset-db.ps1 -Yes
+```
+
+Production deployments should set `AUTO_CREATE_TABLES_ON_STARTUP=false`, run
+`migrate-db.ps1`, and only enable `SEED_ON_STARTUP` for explicit demo
+environments.
 
 ## Tech Stack
 
@@ -118,6 +177,11 @@ Agent falls back to Bing instead of inventing current news.
 | MySQL    | 3308      | 3306           |
 | Backend  | 8082      | 8082           |
 | Frontend | 3000      | 80 (Nginx)     |
+| Redis    | 6379      | 6379           |
+
+实时协作默认使用本地内存房间，适合单机开发。Docker Compose 部署会配置
+`REDIS_URL=redis://redis:6379/0`，后端自动启用 Redis Pub/Sub 广播和
+presence TTL，用于多实例部署。
 
 ## Test Accounts
 
